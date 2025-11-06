@@ -223,6 +223,7 @@ export const chatRouter = createTRPCRouter({
           fundingUtxoVout: true,
           fundingUtxoValueSats: true,
           fundingUtxoNonceHex: true,
+          address: true,
           createdAt: true,
           updatedAt: true,
         },
@@ -241,6 +242,7 @@ export const chatRouter = createTRPCRouter({
         witJson: z.string().optional(),
         faucetUrl: z.string().nullable().optional(),
         fundingTxId: z.string().nullable().optional(),
+        address: z.string().nullable().optional(),
       }),
     )
     .mutation(async ({ ctx, input }) => {
@@ -263,6 +265,7 @@ export const chatRouter = createTRPCRouter({
           ...(input.witJson !== undefined ? { witJson: input.witJson } : {}),
           ...(input.faucetUrl !== undefined ? { faucetUrl: input.faucetUrl } : {}),
           ...(input.fundingTxId !== undefined ? { fundingTxId: input.fundingTxId } : {}),
+          ...(input.address !== undefined ? { address: input.address } : {}),
         },
       });
       return { ok: true as const };

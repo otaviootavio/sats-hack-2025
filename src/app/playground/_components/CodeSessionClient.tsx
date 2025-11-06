@@ -1,122 +1,38 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
 import { PRESETS, type Preset } from "~/app/_utils/presets";
-import initWasmBindings, {
+import {
   liquid_testnet_address_from_source,
 } from "~/pkg/simplicityhl_wasm.js";
 import { api } from "~/trpc/react";
-import { TitleInput } from "~/app/playground/_components/TitleInput";
 import { PresetSelect } from "~/app/playground/_components/PresetSelect";
-import { EditorTextArea } from "~/app/playground/_components/EditorTextArea";
+import { PersistentTextArea } from "~/app/playground/_components/PersistentTextArea";
 import { ReadonlyTextArea } from "~/app/playground/_components/ReadonlyTextArea";
 import { AddressActions } from "~/app/playground/_components/AddressActions";
+import { useWasm } from "~/hooks/useWasm";
+import { DebouncedTitleInput } from "~/app/playground/_components/DebouncedTitleInput";
 
 export default function CodeSessionClient({ chatId }: { chatId: string }) {
-  const [wasmBindings, setWasmBindings] = useState<unknown>(null);
-  const [loadingMessage, setLoadingMessage] = useState("Loading WASM...");
+  const { isInitialized, statusMessage: wasmStatusMessage } = useWasm();
 
-  const [title, setTitle] = useState("");
   const [selectedExampleValue, setSelectedExampleValue] = useState("");
   const [source, setSource] = useState("");
   const [address, setAddress] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
 
-  // refs for debounced autosave
-  const dirtyRef = useRef(false);
-  const titleRef = useRef(title);
-  const selectedExampleValueRef = useRef(selectedExampleValue);
-  const sourceRef = useRef(source);
-
-  useEffect(() => { titleRef.current = title; }, [title]);
-  useEffect(() => { selectedExampleValueRef.current = selectedExampleValue; }, [selectedExampleValue]);
-  useEffect(() => { sourceRef.current = source; }, [source]);
-
   // tRPC hooks for chats
-  const utils = api.useUtils();
   const { data: chatData } = api.chat.get.useQuery(
     { chatId },
     { refetchOnWindowFocus: false }
   );
-  const { mutate: setActiveMutate } = api.chat.setActive.useMutation();
-  const { mutate: updateChatMutate } = api.chat.update.useMutation({
-    onSuccess: async () => {
-      dirtyRef.current = false;
-      await utils.chat.get.invalidate({ chatId });
-      await utils.chat.list.invalidate();
-    },
-  });
-
-  // WASM init (robust against sync/async exports and optional init())
-  useEffect(() => {
-    let mounted = true;
-    const init = async () => {
-      try {
-        const maybe = initWasmBindings();
-        const isPromise = typeof (maybe as { then?: unknown }).then === "function";
-        const bindings = isPromise ? await (maybe as Promise<unknown>) : maybe;
-        if (
-          bindings &&
-          typeof (bindings as { init?: unknown }).init === "function"
-        ) {
-          const initFn = (bindings as { init: () => Promise<void> | void }).init;
-          await initFn();
-        }
-        if (!mounted) return;
-        setWasmBindings(bindings);
-        setLoadingMessage(
-          "WASM loaded. Write code, then click Generate Address."
-        );
-      } catch (e) {
-        setLoadingMessage(`Failed to initialize WASM: ${String(e)}`);
-      }
-    };
-    void init();
-    return () => { mounted = false; };
-  }, []);
-
-  // mark active
-  useEffect(() => {
-    if (!chatId) return;
-    setActiveMutate({ chatId });
-  }, [chatId, setActiveMutate]);
+  const updateChat = api.chat.update.useMutation();
 
   // load chat data
   useEffect(() => {
     if (!chatData) return;
-    setTitle(chatData.title ?? "");
-    setSelectedExampleValue(chatData.selectedExampleValue ?? "");
     setSource(chatData.source ?? "");
+    setAddress(chatData.address ?? "");
   }, [chatData]);
-
-  // Debounced autosave
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const scheduleSaveDebounced = React.useCallback(() => {
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      if (!dirtyRef.current) return;
-      updateChatMutate({
-        chatId,
-        title: titleRef.current,
-        selectedExampleValue: selectedExampleValueRef.current ?? null,
-        source: sourceRef.current,
-      });
-    }, 600);
-  }, [updateChatMutate, chatId]);
-
-  const flushSaveIfDirty = React.useCallback(() => {
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    if (!dirtyRef.current) return;
-    updateChatMutate({
-      chatId,
-      title: titleRef.current,
-      selectedExampleValue: selectedExampleValueRef.current ?? null,
-      source: sourceRef.current,
-    });
-  }, [updateChatMutate, chatId]);
-
-  useEffect(() => {
-    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, []);
 
   const applySelection = (v: string) => {
     setSelectedExampleValue(v);
@@ -126,13 +42,6 @@ export default function CodeSessionClient({ chatId }: { chatId: string }) {
       if (p) {
         setSource(p.simf);
         setStatusMessage(`Loaded ${p.label}.`);
-        setTitle((prev) => {
-          const t = (prev ?? "").trim();
-          if (t === "" || t.toLowerCase() === "untitled") {
-            return p.label;
-          }
-          return prev;
-        });
         return;
       }
     }
@@ -146,7 +55,7 @@ export default function CodeSessionClient({ chatId }: { chatId: string }) {
       setStatusMessage("Editor is empty. Paste code or select an example.");
       return;
     }
-    if (!wasmBindings) {
+    if (!isInitialized) {
       setStatusMessage("WASM not initialized.");
       return;
     }
@@ -160,13 +69,16 @@ export default function CodeSessionClient({ chatId }: { chatId: string }) {
       const addr = await Promise.resolve(maybe as string | Promise<string>);
       if (!addr) {
         setAddress("");
+        await updateChat.mutateAsync({ chatId, address: null });
         setStatusMessage("Invalid program");
         return;
       }
       setAddress(addr);
+      await updateChat.mutateAsync({ chatId, address: addr });
       setStatusMessage("Success: address derived for Liquid Testnet.");
     } catch (e) {
       setAddress("");
+      await updateChat.mutateAsync({ chatId, address: null });
       const errMsg = e instanceof Error ? `${e.message}${e.stack ? "\n" + e.stack : ""}` : String(e);
       setStatusMessage(`Invalid program\n\n${errMsg}`);
     }
@@ -175,36 +87,23 @@ export default function CodeSessionClient({ chatId }: { chatId: string }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center sm:gap-4">
-        <TitleInput
-          value={title}
-          onChange={(v) => {
-            setTitle(v);
-            dirtyRef.current = true;
-            scheduleSaveDebounced();
-          }}
-          onBlur={flushSaveIfDirty}
-        />
+        <DebouncedTitleInput chatId={chatId} initialTitle={chatData?.title ?? ""} />
 
         <PresetSelect
           value={selectedExampleValue}
           options={Object.entries(PRESETS).map(([id, p]) => ({ value: `preset:${id}`, label: p.label }))}
-          onChange={(v) => {
+          onChange={(v: string) => {
             applySelection(v);
-            dirtyRef.current = true;
-            scheduleSaveDebounced();
           }}
-          onBlur={flushSaveIfDirty}
+          // eslint-disable-next-line @typescript-eslint/no-empty-function
+          onBlur={() => {}}
         />
       </div>
 
-      <EditorTextArea
-        value={source}
-        onChange={(v) => {
-          setSource(v);
-          dirtyRef.current = true;
-          scheduleSaveDebounced();
-        }}
-        onBlur={flushSaveIfDirty}
+      <PersistentTextArea
+        chatId={chatId}
+        initialValue={source}
+        onChange={(v) => setSource(v)}
         rows={16}
         placeholder="Paste SimplicityHL source here"
         className="w-full rounded border p-2 font-mono text-sm"
@@ -241,7 +140,7 @@ export default function CodeSessionClient({ chatId }: { chatId: string }) {
         className="w-full rounded border p-2 font-mono text-sm"
       />
 
-      <pre className="rounded bg-gray-100 p-3 text-sm whitespace-pre-wrap">{statusMessage || loadingMessage}</pre>
+      <pre className="rounded bg-gray-100 p-3 text-sm whitespace-pre-wrap">{statusMessage || wasmStatusMessage}</pre>
 
       <div>
         <a href={`/playground/${chatId}`} className="text-sm underline">Back to full playground</a>

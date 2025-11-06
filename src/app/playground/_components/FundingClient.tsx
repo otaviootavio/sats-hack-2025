@@ -1,6 +1,5 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
-import initWasmBindings, { liquid_testnet_address_from_source } from "~/pkg/simplicityhl_wasm.js";
 import { api } from "~/trpc/react";
 import { AddressActions } from "~/app/playground/_components/AddressActions";
 
@@ -21,16 +20,9 @@ type FundingTxErr = { ok: false; error?: string };
 type FundingTxResponse = FundingTxOk | FundingTxErr;
 type RefetchFundingTxResponse = { ok: boolean };
 
-function isPromiseLike<T>(value: unknown): value is PromiseLike<T> {
-  return typeof value === "object" && value !== null && "then" in (value as { then?: unknown }) && typeof (value as { then?: unknown }).then === "function";
-}
-
 export default function FundingClient({ chatId }: { chatId: string }) {
-  const [wasmBindings, setWasmBindings] = useState<unknown>(null);
-  const [loadingMessage, setLoadingMessage] = useState("Loading WASM...");
   const [statusMessage, setStatusMessage] = useState("");
 
-  const [address, setAddress] = useState("");
   const [fundedUrl, setFundedUrl] = useState("");
   const [fundingTxId, setFundingTxId] = useState("");
   const [selectedUtxo, setSelectedUtxo] = useState<SelectedUtxo>(null);
@@ -67,68 +59,21 @@ export default function FundingClient({ chatId }: { chatId: string }) {
 
   const fundingTxDataOk: FundingTxOk | null = fundingTxQuery.data?.ok ? (fundingTxQuery.data as FundingTxOk) : null;
 
-  // WASM init
-  useEffect(() => {
-    let mounted = true;
-    const init = async () => {
-      try {
-        const maybe = initWasmBindings();
-        const isPromise = typeof (maybe as { then?: unknown }).then === "function";
-        const bindings = isPromise ? await (maybe as Promise<unknown>) : maybe;
-        if (
-          bindings &&
-          typeof (bindings as { init?: unknown }).init === "function"
-        ) {
-          const initFn = (bindings as { init: () => Promise<void> | void }).init;
-          await initFn();
-        }
-        if (!mounted) return;
-        setWasmBindings(bindings);
-        setLoadingMessage("WASM loaded. Generate the address, then fund it.");
-      } catch (e) {
-        setLoadingMessage(`Failed to initialize WASM: ${String(e)}`);
-      }
-    };
-    void init();
-    return () => { mounted = false; };
-  }, []);
-
   // mark active
   useEffect(() => {
     if (!chatId) return;
     setActiveMutate({ chatId });
   }, [chatId, setActiveMutate]);
 
-  // load persisted funding data and derive address if possible
+  // load persisted funding data and address
   useEffect(() => {
     if (!chatData) return;
-    setFundedUrl((chatData as unknown as { faucetUrl?: string }).faucetUrl ?? "");
-    setFundingTxId((chatData as unknown as { fundingTxId?: string }).fundingTxId ?? "");
+    setFundedUrl(chatData.faucetUrl ?? "");
+    setFundingTxId(chatData.fundingTxId ?? "");
+  }, [chatData]);
 
-    const source = (chatData as unknown as { source?: string }).source ?? "";
-    if (source && wasmBindings) {
-      void (async () => {
-        try {
-          if (typeof liquid_testnet_address_from_source !== "function") {
-            setStatusMessage("This build does not expose address helper.");
-            return;
-          }
-          const maybe = liquid_testnet_address_from_source(source, "", true) as unknown;
-          let addr: string | undefined;
-          if (isPromiseLike<string>(maybe)) {
-            addr = await maybe;
-          } else {
-            addr = maybe as string;
-          }
-          if (addr) setAddress(addr);
-          else setStatusMessage("Invalid program");
-        } catch (e) {
-          const errMsg = e instanceof Error ? `${e.message}${e.stack ? "\n" + e.stack : ""}` : String(e);
-          setStatusMessage(`Invalid program\n\n${errMsg}`);
-        }
-      })();
-    }
-  }, [chatData, wasmBindings]);
+  // Get address from chat data
+  const address = chatData?.address ?? "";
 
   // select server-provided utxo when tx loads
   useEffect(() => {
@@ -153,38 +98,6 @@ export default function FundingClient({ chatId }: { chatId: string }) {
     }
   }, [fundingTxQuery.data, fundingTxId, highlightBtcString]);
 
-  const handleGenerateAddress = async () => {
-    try {
-      const source = (chatData as unknown as { source?: string }).source ?? "";
-      if (!source) {
-        setStatusMessage("No program source found. Go to Code Session first.");
-        return;
-      }
-      if (!wasmBindings) {
-        setStatusMessage("WASM not initialized.");
-        return;
-      }
-      setStatusMessage("Generating address...");
-      const maybe = liquid_testnet_address_from_source(source, "", true) as unknown;
-      let addr: string | undefined;
-      if (isPromiseLike<string>(maybe)) {
-        addr = await maybe;
-      } else {
-        addr = maybe as string;
-      }
-      if (!addr) {
-        setAddress("");
-        setStatusMessage("Invalid program");
-        return;
-      }
-      setAddress(addr);
-      setStatusMessage("Success: address derived for Liquid Testnet.");
-    } catch (e) {
-      setAddress("");
-      const errMsg = e instanceof Error ? `${e.message}${e.stack ? "\n" + e.stack : ""}` : String(e);
-      setStatusMessage(`Invalid program\n\n${errMsg}`);
-    }
-  };
 
   const handleFundAddress = () => {
     if (!address) return;
@@ -256,7 +169,6 @@ export default function FundingClient({ chatId }: { chatId: string }) {
         <span className="text-xs text-muted-foreground">Derived from the program&apos;s CMR. Faucet sends 100000 tL-BTC.</span>
       </div>
       <AddressActions
-        onGenerate={handleGenerateAddress}
         onCopy={async () => { if (!address) return; await navigator.clipboard.writeText(address); setStatusMessage("Copied address to clipboard."); }}
         copyDisabled={!address}
       />
@@ -264,7 +176,7 @@ export default function FundingClient({ chatId }: { chatId: string }) {
 
       <label className="block text-sm font-medium">Funding</label>
       {!address && (
-        <p className="text-muted-foreground text-sm">Generate the address in order to fund the wallet.</p>
+        <p className="text-muted-foreground text-sm">No address found for this chat. The address should be generated in the Code Session.</p>
       )}
       {address && !fundedUrl && (
         <div className="flex items-center gap-2">
@@ -278,7 +190,15 @@ export default function FundingClient({ chatId }: { chatId: string }) {
       )}
       {fundedUrl && fundingTxId && (
         <div className="mt-2 text-sm">
-          <span className="font-medium">Funding transaction:</span> {fundingTxId}
+          <span className="font-medium">Funding transaction:</span> {fundingTxId}{" "}
+          <a
+            href={`https://blockstream.info/liquidtestnet/tx/${fundingTxId}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline"
+          >
+            View on explorer
+          </a>
         </div>
       )}
       {fundedUrl && !fundingTxId && (
@@ -347,7 +267,7 @@ export default function FundingClient({ chatId }: { chatId: string }) {
         </div>
       )}
 
-      <pre className="rounded bg-gray-100 p-3 text-sm whitespace-pre-wrap">{statusMessage || loadingMessage}</pre>
+      <pre className="rounded bg-gray-100 p-3 text-sm whitespace-pre-wrap">{statusMessage}</pre>
 
       <div className="flex gap-4 text-sm">
         <a href={`/playground/${chatId}`} className="underline">Back to full playground</a>

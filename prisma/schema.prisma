@@ -73,6 +73,7 @@ model Chat {
     source               String   @default("")
     argsJson             String   @default("")
     witJson              String   @default("")
+    address              String?
     faucetUrl            String?
     fundingTxId          String?
     // Persisted funding transaction snapshot and selected UTXO
