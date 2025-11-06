@@ -1,0 +1,15 @@
+{
+  "name": "simplicityhl-wasm",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "simplicityhl_wasm_bg.wasm",
+    "simplicityhl_wasm.js",
+    "simplicityhl_wasm.d.ts"
+  ],
+  "main": "simplicityhl_wasm.js",
+  "types": "simplicityhl_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
