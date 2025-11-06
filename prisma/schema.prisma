@@ -51,6 +51,9 @@ model User {
     accounts      Account[]
     sessions      Session[]
     selectedPreset String?
+    // Multi-chat support
+    selectedChatId String?
+    chats          Chat[]
 }
 
 model VerificationToken {
@@ -59,4 +62,30 @@ model VerificationToken {
     expires    DateTime
 
     @@unique([identifier, token])
+}
+
+model Chat {
+    id                   String   @id @default(cuid())
+    userId               String
+    user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+    title                String
+    selectedExampleValue String?
+    source               String   @default("")
+    argsJson             String   @default("")
+    witJson              String   @default("")
+    faucetUrl            String?
+    fundingTxId          String?
+    // Persisted funding transaction snapshot and selected UTXO
+    fundingTxSnapshot    Json?
+    fundingUtxoVout      Int?
+    fundingUtxoValueSats Int?
+    fundingUtxoNonceHex  String?
+    // Ephemeral per-chat wallet (POC)
+    walletPubHex         String?
+    walletPrivEnc        String? // base64(ciphertext + authTag)
+    walletPrivIv         String? // base64(12-byte GCM nonce)
+    createdAt            DateTime @default(now())
+    updatedAt            DateTime @updatedAt
+
+    @@index([userId, createdAt])
 }
