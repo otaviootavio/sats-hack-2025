@@ -50,6 +50,7 @@ model User {
     image         String?
     accounts      Account[]
     sessions      Session[]
+    selectedPreset String?
 }
 
 model VerificationToken {

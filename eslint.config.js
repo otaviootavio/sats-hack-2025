@@ -7,7 +7,13 @@ const compat = new FlatCompat({
 
 export default tseslint.config(
   {
-    ignores: [".next"],
+    ignores: [
+      ".next",
+      // ignore compiled wasm artifacts and vendorized bindings
+      "src/pkg/**",
+      // local thin wrapper over wasm with intentional any/unsafe usage
+      "src/app/_utils/wasm.ts",
+    ],
   },
   ...compat.extends("next/core-web-vitals"),
   {

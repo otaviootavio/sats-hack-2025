@@ -1,12 +1,13 @@
 'use client'
 import React, { useEffect, useState } from 'react'
-import { PRESETS } from '~/app/_utils/presets'
+import { PRESETS, type Preset } from '~/app/_utils/presets'
 import initWasmBindings, { compile_and_satisfy, compile_source, compile_source_with_args, liquid_testnet_address_from_source } from '~/pkg/simplicityhl_wasm.js'
+import { api } from "~/trpc/react";
 
 type LastResult = { program_base64: string; witness_base64?: string } | null
 
 export default function PlaygroundClient() {
-  const [wasmBindings, setWasmBindings] = useState<any | null>(null)
+  const [wasmBindings, setWasmBindings] = useState<unknown>(null)
   const [loadingMessage, setLoadingMessage] = useState('Loading WASM...')
 
   const [source, setSource] = useState('')
@@ -17,6 +18,20 @@ export default function PlaygroundClient() {
   const [lastResult, setLastResult] = useState<LastResult>(null)
   const [selectedExampleValue, setSelectedExampleValue] = useState('')
 
+  const isPromiseLike = <T,>(value: unknown): value is Promise<T> =>
+    typeof (value as { then?: unknown }).then === 'function'
+
+  // tRPC hooks for persisted preset
+  const utils = api.useUtils()
+  const { data: persistedPreset } = api.preset.getSelected.useQuery(undefined, {
+    refetchOnWindowFocus: false,
+  })
+  const setPresetMutation = api.preset.setSelected.useMutation({
+    onSuccess: () => {
+      void utils.preset.getSelected.invalidate()
+    },
+  })
+
   useEffect(() => {
     let mounted = true
     const init = async () => {
@@ -24,10 +39,12 @@ export default function PlaygroundClient() {
         // initWasmBindings may return either the bindings directly or a Promise that
         // resolves to the bindings. Handle both shapes to be robust.
         const maybe = initWasmBindings()
-        const bindings = maybe && typeof (maybe as any).then === 'function' ? await maybe : maybe
+        const isPromise = typeof (maybe as { then?: unknown }).then === 'function'
+        const bindings = isPromise ? await (maybe as Promise<unknown>) : maybe
         // Older builds might expose an `init` method on the bindings; call it if present.
-        if (bindings && typeof (bindings as any).init === 'function') {
-          await (bindings as any).init()
+        if (bindings && typeof (bindings as { init?: unknown }).init === 'function') {
+          const initFn = (bindings as { init: () => Promise<void> | void }).init
+          await initFn()
         }
         if (!mounted) return
         setWasmBindings(bindings)
@@ -36,7 +53,7 @@ export default function PlaygroundClient() {
         setLoadingMessage(`Failed to initialize WASM: ${String(e)}`)
       }
     }
-    init()
+    void init()
     return () => {
       mounted = false
     }
@@ -44,12 +61,11 @@ export default function PlaygroundClient() {
 
   useEffect(() => setOutputMessage(loadingMessage), [loadingMessage])
 
-  const handlePresetChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const v = e.target.value
+  const applySelection = (v: string) => {
     setSelectedExampleValue(v)
     if (v.startsWith('preset:')) {
       const id = v.slice('preset:'.length)
-      const p = (PRESETS as any)[id]
+      const p = (PRESETS as Record<string, Preset | undefined>)[id]
       if (p) {
         setSource(p.simf)
         setArgsJson(p.args)
@@ -58,7 +74,22 @@ export default function PlaygroundClient() {
         return
       }
     }
+    setSource('')
+    setArgsJson('')
+    setWitJson('')
     setOutputMessage(v ? `Loaded example.` : 'Cleared editor.')
+  }
+
+  useEffect(() => {
+    if (typeof persistedPreset === 'string') {
+      applySelection(persistedPreset)
+    }
+  }, [persistedPreset])
+
+  const handlePresetChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const v = e.target.value
+    applySelection(v)
+    setPresetMutation.mutate({ value: v })
   }
 
   const updateLastResultState = (v: LastResult) => {
@@ -88,12 +119,13 @@ export default function PlaygroundClient() {
           setOutputMessage('This build does not support witness in the browser. Rebuild WASM to enable it.')
           return
         }
-        const jsonStr = await compile_and_satisfy(
+        const maybeJson = compile_and_satisfy(
           code,
           argsJson || '',
           wit,
           debugEnabled
         )
+        const jsonStr = isPromiseLike<string>(maybeJson) ? await maybeJson : (maybeJson)
         const obj = JSON.parse(jsonStr) as { program_base64: string; witness_base64?: string }
         updateLastResultState(obj)
         setOutputMessage('Success: program and witness base64 copied to the text boxes.')
@@ -103,17 +135,19 @@ export default function PlaygroundClient() {
       // Compile-only path
       let result = ''
       if (argsJson.trim()) {
-        result = await compile_source_with_args(code, argsJson, debugEnabled)
+        const maybeRes = compile_source_with_args(code, argsJson, debugEnabled)
+        result = isPromiseLike<string>(maybeRes) ? await maybeRes : (maybeRes)
       } else {
-        result = await compile_source(code, debugEnabled)
+        const maybeRes = compile_source(code, debugEnabled)
+        result = isPromiseLike<string>(maybeRes) ? await maybeRes : (maybeRes)
       }
       // Try to parse JSON; if not JSON, assume the function returned the program base64 directly
       let programBase64 = ''
       const trimmed = (result || '').trim()
       if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
         try {
-          const parsed = JSON.parse(trimmed) as any
-          programBase64 = parsed?.program_base64 ?? ''
+          const parsed = JSON.parse(trimmed) as { program_base64?: string }
+          programBase64 = parsed.program_base64 ?? ''
         } catch {
           programBase64 = trimmed
         }
@@ -144,10 +178,7 @@ export default function PlaygroundClient() {
       setOutputMessage('WASM not initialized.')
       return
     }
-    if (typeof wasmBindings.liquid_testnet_address_from_source !== 'function') {
-      setOutputMessage('This build does not support address generation in the browser. Rebuild WASM to enable it.')
-      return
-    }
+    // capability check is done on the imported function below
     setOutputMessage('Generating address...')
     try {
       // call the exported wrapper function directly (it uses the initialized `wasm` under the hood)
@@ -156,9 +187,7 @@ export default function PlaygroundClient() {
         return
       }
       const maybe = liquid_testnet_address_from_source(source, argsJson || '', true)
-      const addr = maybe && typeof (maybe as any).then === 'function'
-        ? await (maybe as unknown as Promise<string>)
-        : (maybe as unknown as string)
+      const addr = isPromiseLike<string>(maybe) ? await maybe : (maybe)
       // debug: if empty string, show a helpful message
       if (!addr) {
         setAddress('')
@@ -221,7 +250,7 @@ export default function PlaygroundClient() {
             <optgroup label="Repository examples">
               {Object.entries(PRESETS).map(([id, p]) => (
                 <option key={id} value={`preset:${id}`}>
-                  {(p as any).label}
+                  {p.label}
                 </option>
               ))}
             </optgroup>
