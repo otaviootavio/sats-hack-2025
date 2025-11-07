@@ -2,6 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
+import { MessageContent } from "./_components/MessageContent";
 
 type Message = {
   id: string;
@@ -24,17 +25,6 @@ export default function AiAgentPage() {
   const [isSending, setIsSending] = React.useState(false);
   const messagesEndRef = React.useRef<HTMLDivElement | null>(null);
   const messagesContainerRef = React.useRef<HTMLDivElement | null>(null);
-  const pendingReplyRef = React.useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-
-  React.useEffect(() => {
-    return () => {
-      if (pendingReplyRef.current) {
-        clearTimeout(pendingReplyRef.current);
-      }
-    };
-  }, []);
 
   React.useEffect(() => {
     if (messagesContainerRef.current) {
@@ -45,7 +35,7 @@ export default function AiAgentPage() {
     }
   }, [messages]);
 
-  const handleSend = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSend = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmed = input.trim();
     if (!trimmed || isSending) {
@@ -62,16 +52,90 @@ export default function AiAgentPage() {
     setInput("");
     setIsSending(true);
 
-    pendingReplyRef.current = setTimeout(() => {
-      const assistantMessage: Message = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content:
-          "Great thought! We'll soon wire this up to our full agent runtime. For now, imagine I'm drafting the perfect smart contract snippet for you.",
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
+    // Cria mensagem de assistente vazia para streaming
+    const assistantMessageId = crypto.randomUUID();
+    const assistantMessage: Message = {
+      id: assistantMessageId,
+      role: "assistant",
+      content: "",
+    };
+    setMessages((prev) => [...prev, assistantMessage]);
+
+    try {
+      // Prepara histórico de conversa
+      const conversationHistory = messages.map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+      }));
+
+      // Chama a API de streaming
+      const response = await fetch("/api/ai-agent", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: trimmed,
+          conversationHistory,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to get response");
+      }
+
+      // Processa streaming
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let accumulatedText = "";
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value);
+          const lines = chunk.split("\n").filter((line) => line.trim());
+
+          for (const line of lines) {
+            try {
+              const event = JSON.parse(line);
+              
+              if (event.type === "text") {
+                accumulatedText = event.data.accumulated;
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMessageId
+                      ? { ...msg, content: accumulatedText }
+                      : msg
+                  )
+                );
+              } else if (event.type === "done") {
+                setIsSending(false);
+              } else if (event.type === "error") {
+                throw new Error(event.data.error || "Unknown error");
+              }
+            } catch (parseError) {
+              // Ignora erros de parsing de linhas incompletas
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Error sending message:", error);
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === assistantMessageId
+            ? {
+                ...msg,
+                content:
+                  "Sorry, I encountered an error. Please try again.",
+              }
+            : msg
+        )
+      );
       setIsSending(false);
-    }, 600);
+    }
   };
 
   return (
@@ -115,7 +179,14 @@ export default function AiAgentPage() {
                       : "border border-slate-200 bg-white text-slate-900"
                   }`}
                 >
-                  {message.content}
+                  {message.content ? (
+                    <MessageContent
+                      content={message.content}
+                      isUser={message.role === "user"}
+                    />
+                  ) : message.role === "assistant" && isSending ? (
+                    <span className="text-slate-500">...</span>
+                  ) : null}
                 </div>
               </div>
             ))}
@@ -140,9 +211,17 @@ export default function AiAgentPage() {
             }}
             placeholder="Share what you want to build, and we'll guide you…"
             rows={3}
-            className="w-full resize-none overflow-y-auto rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-200 sm:flex-1"
+            disabled={isSending}
+            className="w-full resize-none overflow-y-auto rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-200 disabled:opacity-50 disabled:cursor-not-allowed sm:flex-1"
             aria-label="Message"
           />
+          <button
+            type="submit"
+            disabled={isSending || !input.trim()}
+            className="rounded-xl bg-sky-600 px-6 py-3 text-sm font-medium text-white shadow-sm transition hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isSending ? "Sending..." : "Send"}
+          </button>
         </div>
       </form>
     </div>
