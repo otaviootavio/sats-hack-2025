@@ -41,7 +41,7 @@ export default function ChatSidebar({
       <div className="mb-5 flex flex-col justify-start gap-2 p-3">
         <div>
           <Button onClick={() => createMutation.mutate({})} size="sm">
-            New chat
+            ➕ New tab
           </Button>
         </div>
         <div>

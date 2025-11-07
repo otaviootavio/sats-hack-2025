@@ -18,6 +18,11 @@ import {
   CardHeader,
   CardTitle,
 } from "~/components/ui/card";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "~/components/ui/alert";
 
 export default function CodeSessionClient({ chatId }: { chatId: string }) {
   const { isInitialized } = useWasm();
@@ -27,7 +32,10 @@ export default function CodeSessionClient({ chatId }: { chatId: string }) {
   const [source, setSource] = useState("");
   const [args, setArgs] = useState("");
   const [address, setAddress] = useState("");
-  const [, setStatusMessage] = useState("");
+  const [statusMessage, setStatusMessage] = useState("");
+  const [statusVariant, setStatusVariant] = useState<"default" | "destructive">(
+    "default",
+  );
 
   // tRPC hooks for chats
   const { data: chatData } = api.chat.get.useQuery(
@@ -59,30 +67,36 @@ export default function CodeSessionClient({ chatId }: { chatId: string }) {
           argsJson: p.args,
         });
         setStatusMessage(`Loaded ${p.label}.`);
+        setStatusVariant("default");
         return;
       }
     }
     setSource("");
     setArgs("");
     setStatusMessage(v ? `Loaded example.` : "Cleared editor.");
+    setStatusVariant("default");
   };
 
   const handleGenerateAddress = async () => {
     const code = source.trim();
     if (!code) {
       setStatusMessage("Editor is empty. Paste code or select an example.");
+      setStatusVariant("destructive");
       return;
     }
     if (!isInitialized) {
       setStatusMessage("WASM not initialized.");
+      setStatusVariant("destructive");
       return;
     }
     setStatusMessage("Generating address...");
+    setStatusVariant("default");
     try {
       if (typeof liquid_testnet_address_from_source !== "function") {
         setStatusMessage(
           "This build does not expose address helper. Rebuild WASM to enable it.",
         );
+        setStatusVariant("destructive");
         return;
       }
       const maybe = liquid_testnet_address_from_source(
@@ -95,11 +109,13 @@ export default function CodeSessionClient({ chatId }: { chatId: string }) {
         setAddress("");
         await updateChat.mutateAsync({ chatId, address: null });
         setStatusMessage("Invalid program");
+        setStatusVariant("destructive");
         return;
       }
       setAddress(addr);
       await updateChat.mutateAsync({ chatId, address: addr });
       setStatusMessage("Success: address derived for Liquid Testnet.");
+      setStatusVariant("default");
     } catch (e) {
       setAddress("");
       await updateChat.mutateAsync({ chatId, address: null });
@@ -108,6 +124,7 @@ export default function CodeSessionClient({ chatId }: { chatId: string }) {
           ? `${e.message}${e.stack ? "\n" + e.stack : ""}`
           : String(e);
       setStatusMessage(`Invalid program\n\n${errMsg}`);
+      setStatusVariant("destructive");
     }
   };
 
@@ -191,6 +208,16 @@ export default function CodeSessionClient({ chatId }: { chatId: string }) {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {statusMessage && (
+            <Alert variant={statusVariant}>
+              <AlertTitle>
+                {statusVariant === "destructive" ? "Compilation error" : "Status"}
+              </AlertTitle>
+              <AlertDescription>
+                <pre className="whitespace-pre-wrap font-mono text-xs">{statusMessage}</pre>
+              </AlertDescription>
+            </Alert>
+          )}
           <ReadonlyTextArea
             value={address}
             rows={2}
