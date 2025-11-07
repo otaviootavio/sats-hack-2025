@@ -20,11 +20,10 @@ export class SimplicityDocsAgent {
       const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
         {
           role: 'system',
-          content: `${AGENT_SYSTEM_PROMPTS.SIMPLICITY_DOCS}\n\nDocumentação oficial: ${SIMPLICITY_DOCS_URL}`,
+          content: `${AGENT_SYSTEM_PROMPTS.SIMPLICITY_DOCS}\n\nOfficial Documentation: ${SIMPLICITY_DOCS_URL}\n\nRemember: You're helping users in SimplyIDE — the browser-based IDE where they can write, compile (WASM), and deploy Simplicity contracts to Liquid Testnet with zero setup.`,
         },
       ];
 
-      // Adiciona histórico de conversa recente
       if (context.conversationHistory && context.conversationHistory.length > 0) {
         const recentHistory = context.conversationHistory.slice(-6);
         for (const msg of recentHistory) {
@@ -53,7 +52,7 @@ export class SimplicityDocsAgent {
       return {
         success: false,
         agentType: this.agentType,
-        response: 'Erro ao processar sua dúvida sobre Simplicity.',
+        response: 'Sorry, I encountered an error processing your question about Simplicity. Please try again, or rephrase your question. In SimplyIDE, you can learn about Simplicity and deploy contracts all from your browser!',
         error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
@@ -62,14 +61,19 @@ export class SimplicityDocsAgent {
   async canHandle(input: string): Promise<boolean> {
     const lowerInput = input.toLowerCase();
     const keywords = [
-      'o que é',
-      'como funciona',
-      'explicar',
-      'documentação',
-      'conceito',
+      'what is',
+      'how does',
+      'explain',
+      'documentation',
+      'concept',
       'simplicity',
-      'dúvida',
-      'pergunta',
+      'question',
+      'what',
+      'which',
+      'formal verification',
+      'covenant',
+      'bitcoin smart contract',
+      'simplicity language',
     ];
     return keywords.some((keyword) => lowerInput.includes(keyword));
   }

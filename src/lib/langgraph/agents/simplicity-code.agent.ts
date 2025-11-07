@@ -36,17 +36,59 @@ export class SimplicityCodeAgent {
 
   async process(input: string, context: AgentContext): Promise<AgentResponse> {
     try {
-      // Carrega exemplos e encontra os mais relevantes
       const allExamples = this.loadExamples();
-      const relevantExamples = findRelevantExamples(input, allExamples);
+      let relevantExamples = findRelevantExamples(input, allExamples);
+      
+      if (relevantExamples.length < 3 && allExamples.length > 0) {
+        const fallbackExamples: SimplicityExample[] = [];
+        
+        const escrowExample = allExamples.find(ex => ex.name.includes('escrow'));
+        const p2pkExample = allExamples.find(ex => ex.name.includes('p2pk'));
+        const htlcExample = allExamples.find(ex => ex.name.includes('htlc'));
+        const p2pkhExample = allExamples.find(ex => ex.name.includes('p2pkh'));
+        const vaultExample = allExamples.find(ex => ex.name.includes('vault'));
+        
+        [escrowExample, p2pkExample, htlcExample, p2pkhExample, vaultExample].forEach(ex => {
+          if (ex && !fallbackExamples.some(f => f.name === ex.name)) {
+            fallbackExamples.push(ex);
+          }
+        });
+        
+        if (fallbackExamples.length < 3) {
+          for (const ex of allExamples) {
+            if (!fallbackExamples.some(f => f.name === ex.name)) {
+              fallbackExamples.push(ex);
+              if (fallbackExamples.length >= 5) break;
+            }
+          }
+        }
+        
+        const combined = [...relevantExamples];
+        fallbackExamples.forEach(ex => {
+          if (!combined.some(c => c.name === ex.name)) {
+            combined.push(ex);
+          }
+        });
+        
+        relevantExamples = combined.slice(0, 5); 
+      }
+      
       const examplesText = formatExamplesForPrompt(relevantExamples);
 
-      // Constrói o prompt do sistema com exemplos
-      let systemPrompt = `${AGENT_SYSTEM_PROMPTS.SIMPLICITY_CODE}\n\nRepositório GitHub: ${SIMPLICITY_GITHUB_URL}`;
+      let systemPrompt = `${AGENT_SYSTEM_PROMPTS.SIMPLICITY_CODE}\n\nGitHub Repository: ${SIMPLICITY_GITHUB_URL}`;
       
       if (examplesText) {
         systemPrompt += `\n\n${examplesText}`;
-        systemPrompt += `\n\nIMPORTANTE: Use esses exemplos como referência para criar código Simplicity. Baseie-se nos padrões, funções e estruturas mostradas nos exemplos acima.`;
+        systemPrompt += `\n\nCRITICAL INSTRUCTIONS:
+- You MUST ALWAYS return ONLY Simplicity code (file extension .simf)
+- NEVER return code in other languages (Solidity, JavaScript, Python, etc.)
+- Base your code on the patterns, functions, and structures shown in the examples above
+- Use Simplicity syntax, types, and functions (jet::*, witness::*, etc.)
+- All code must be valid Simplicity that can compile via WASM in SimplyIDE
+- Remember: users are working in SimplyIDE — a browser-based IDE where code compiles instantly via WASM and deploys directly to Liquid Testnet with one click
+- If the user asks for code, they want Simplicity code, not any other language`;
+      } else {
+        systemPrompt += `\n\nCRITICAL: You MUST ALWAYS return ONLY Simplicity code. NEVER return code in other languages. All code must be valid Simplicity syntax.`;
       }
 
       const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
@@ -56,7 +98,6 @@ export class SimplicityCodeAgent {
         },
       ];
 
-      // Adiciona histórico de conversa recente
       if (context.conversationHistory && context.conversationHistory.length > 0) {
         const recentHistory = context.conversationHistory.slice(-6);
         for (const msg of recentHistory) {
@@ -85,7 +126,7 @@ export class SimplicityCodeAgent {
       return {
         success: false,
         agentType: this.agentType,
-        response: 'Erro ao processar sua solicitação de código Simplicity.',
+        response: 'Sorry, I encountered an error processing your Simplicity code request. Please try again, or rephrase your question. Remember, in SimplyIDE you can write, compile (WASM), and deploy to Liquid Testnet all from your browser!',
         error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
@@ -94,16 +135,21 @@ export class SimplicityCodeAgent {
   async canHandle(input: string): Promise<boolean> {
     const lowerInput = input.toLowerCase();
     const keywords = [
-      'código',
       'code',
-      'exemplo',
-      'implementação',
+      'example',
+      'implementation',
       'github',
-      'repositório',
-      'mostre',
-      'como fazer',
-      'como criar',
-      'contrato',
+      'repository',
+      'show',
+      'how to',
+      'create',
+      'contract',
+      'smart contract',
+      'deploy',
+      'compile',
+      'debug',
+      'optimize',
+      'write',
     ];
     return keywords.some((keyword) => lowerInput.includes(keyword));
   }

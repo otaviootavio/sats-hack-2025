@@ -4,6 +4,21 @@ import React from "react";
 import Link from "next/link";
 import { MessageContent } from "./_components/MessageContent";
 
+function ThinkingIndicator({ message }: { message: string }) {
+  return (
+    <div className="flex items-center gap-2 text-slate-500">
+      <div className="flex gap-1">
+        <div className="h-2 w-2 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.3s]"></div>
+        <div className="h-2 w-2 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.15s]"></div>
+        <div className="h-2 w-2 animate-bounce rounded-full bg-slate-400"></div>
+      </div>
+      {message && (
+        <span className="text-xs italic text-slate-500">{message}</span>
+      )}
+    </div>
+  );
+}
+
 type Message = {
   id: string;
   role: "assistant" | "user";
@@ -23,6 +38,7 @@ export default function AiAgentPage() {
   const [messages, setMessages] = React.useState<Message[]>(initialMessages);
   const [input, setInput] = React.useState("");
   const [isSending, setIsSending] = React.useState(false);
+  const [thinkingMessage, setThinkingMessage] = React.useState<string>("");
   const messagesEndRef = React.useRef<HTMLDivElement | null>(null);
   const messagesContainerRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -101,7 +117,12 @@ export default function AiAgentPage() {
             try {
               const event = JSON.parse(line);
               
-              if (event.type === "text") {
+              if (event.type === "thinking") {
+                // Atualiza mensagem de pensamento
+                setThinkingMessage(event.data.message || "");
+              } else if (event.type === "text") {
+                // Quando começa a receber texto, limpa mensagem de pensamento
+                setThinkingMessage("");
                 accumulatedText = event.data.accumulated;
                 setMessages((prev) =>
                   prev.map((msg) =>
@@ -111,8 +132,10 @@ export default function AiAgentPage() {
                   )
                 );
               } else if (event.type === "done") {
+                setThinkingMessage("");
                 setIsSending(false);
               } else if (event.type === "error") {
+                setThinkingMessage("");
                 throw new Error(event.data.error || "Unknown error");
               }
             } catch (parseError) {
@@ -135,6 +158,7 @@ export default function AiAgentPage() {
         )
       );
       setIsSending(false);
+      setThinkingMessage("");
     }
   };
 
@@ -185,7 +209,7 @@ export default function AiAgentPage() {
                       isUser={message.role === "user"}
                     />
                   ) : message.role === "assistant" && isSending ? (
-                    <span className="text-slate-500">...</span>
+                    <ThinkingIndicator message={thinkingMessage} />
                   ) : null}
                 </div>
               </div>

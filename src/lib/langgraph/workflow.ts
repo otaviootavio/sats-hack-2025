@@ -2,7 +2,7 @@ import { RouterAgent } from './agents/router.agent';
 import { SimplicityDocsAgent } from './agents/simplicity-docs.agent';
 import { SimplicityCodeAgent } from './agents/simplicity-code.agent';
 import { GeneralAgent } from './agents/general.agent';
-import { AgentType, AgentContext, AgentResponse } from './types';
+import { AgentType, type AgentContext, type AgentResponse } from './types';
 
 export class SimplicityWorkflow {
   private routerAgent: RouterAgent;
@@ -19,10 +19,8 @@ export class SimplicityWorkflow {
 
   async process(input: string, context: AgentContext): Promise<AgentResponse> {
     try {
-      // 1. Roteamento
       const routingDecision = await this.routerAgent.route(input, context);
 
-      // 2. Processamento com o agente escolhido
       let response: AgentResponse;
 
       switch (routingDecision.targetAgent) {
@@ -43,7 +41,7 @@ export class SimplicityWorkflow {
       return {
         success: false,
         agentType: AgentType.GENERAL,
-        response: 'Erro ao processar sua solicitação. Tente novamente.',
+        response: 'Sorry, I encountered an error processing your request. Please try again. SimplyIDE enables you to write, compile (WASM), and deploy Simplicity contracts to Liquid Testnet all from your browser!',
         error: error instanceof Error ? error.message : 'Unknown error',
       };
     }
@@ -54,36 +52,61 @@ export class SimplicityWorkflow {
     context: AgentContext,
   ): AsyncGenerator<{ type: string; data: any }, void, unknown> {
     try {
-      // Emite evento de início
       yield {
-        type: 'step-start',
+        type: 'thinking',
         data: {
-          step: 'routing',
-          message: 'Analisando sua solicitação...',
+          message: 'Understanding your request...',
         },
       };
 
-      // 1. Roteamento
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      yield {
+        type: 'thinking',
+        data: {
+          message: 'Analyzing intent and routing to the right agent...',
+        },
+      };
+
       const routingDecision = await this.routerAgent.route(input, context);
 
-      yield {
-        type: 'step-complete',
-        data: {
-          step: 'routing',
-          message: `Roteado para agente: ${routingDecision.targetAgent}`,
-          result: routingDecision,
-        },
-      };
+      let processingMessages: string[] = [];
+      
+      switch (routingDecision.targetAgent) {
+        case AgentType.SIMPLICITY_DOCS:
+          processingMessages = [
+            'Loading Simplicity documentation...',
+            'Understanding concepts and formal verification...',
+            'Preparing explanation in plain English...',
+          ];
+          break;
+        case AgentType.SIMPLICITY_CODE:
+          processingMessages = [
+            'Loading Simplicity code examples...',
+            'Analyzing patterns and best practices...',
+            'Crafting production-ready Simplicity code...',
+            'Ensuring formal verification compatibility...',
+          ];
+          break;
+        case AgentType.GENERAL:
+        default:
+          processingMessages = [
+            'Processing your request...',
+            'Gathering relevant information...',
+          ];
+          break;
+      }
 
-      yield {
-        type: 'step-start',
-        data: {
-          step: 'processing',
-          message: `Processando com ${routingDecision.targetAgent}...`,
-        },
-      };
+      for (let i = 0; i < processingMessages.length; i++) {
+        yield {
+          type: 'thinking',
+          data: {
+            message: processingMessages[i],
+          },
+        };
+        await new Promise((resolve) => setTimeout(resolve, 400 + Math.random() * 300));
+      }
 
-      // 2. Processamento com o agente escolhido
       let response: AgentResponse;
 
       switch (routingDecision.targetAgent) {
@@ -100,14 +123,14 @@ export class SimplicityWorkflow {
       }
 
       yield {
-        type: 'step-complete',
+        type: 'thinking',
         data: {
-          step: 'processing',
-          message: 'Processamento concluído',
+          message: 'Finalizing response...',
         },
       };
+      
+      await new Promise((resolve) => setTimeout(resolve, 200));
 
-      // 3. Streaming da resposta (simula digitação)
       if (response.success && response.response) {
         const text = response.response;
         let accumulated = '';
@@ -121,8 +144,7 @@ export class SimplicityWorkflow {
               accumulated,
               isComplete: i === text.length - 1,
             },
-          };
-          // Pequena pausa para simular digitação
+          };  
           await new Promise((resolve) => setTimeout(resolve, 10));
         }
       }
@@ -130,7 +152,7 @@ export class SimplicityWorkflow {
       yield {
         type: 'done',
         data: {
-          message: 'Resposta completa',
+          message: 'Response complete',
           response,
         },
       };
@@ -138,7 +160,7 @@ export class SimplicityWorkflow {
       yield {
         type: 'error',
         data: {
-          message: 'Erro ao processar solicitação',
+          message: 'Error processing request',
           error: error instanceof Error ? error.message : 'Unknown error',
         },
       };

@@ -1,5 +1,5 @@
 import { ChatOpenAI } from '@langchain/openai';
-import { AgentType, AgentContext, RoutingDecision } from '../types';
+import { AgentType, type AgentContext, type RoutingDecision } from '../types';
 import { AGENT_SYSTEM_PROMPTS } from '../constants';
 
 export class RouterAgent {
@@ -15,17 +15,15 @@ export class RouterAgent {
 
   async route(input: string, context: AgentContext): Promise<RoutingDecision> {
     try {
-      // Primeiro tenta match por palavras-chave
       const keywordMatch = this.matchByKeywords(input);
       if (keywordMatch) {
         return {
           targetAgent: keywordMatch,
           confidence: 90,
-          reasoning: 'Match por palavras-chave',
+          reasoning: 'Keyword match',
         };
       }
 
-      // Se não encontrar, usa LLM para análise semântica
       const response = await this.llm.invoke([
         {
           role: 'system',
@@ -33,7 +31,7 @@ export class RouterAgent {
         },
         {
           role: 'user',
-          content: `Analise esta solicitação e determine o agente apropriado: "${input}"`,
+          content: `Analyze this request and determine the appropriate agent for SimplyIDE (browser-based IDE for Bitcoin smart contracts): "${input}"`,
         },
       ]);
 
@@ -52,61 +50,63 @@ export class RouterAgent {
         confidence = 70;
       }
 
-      return {
-        targetAgent,
-        confidence,
-        reasoning: `Decisão do LLM: ${agentChoice}`,
-      };
+        return {
+          targetAgent,
+          confidence,
+          reasoning: `LLM decision: ${agentChoice}`,
+        };
     } catch (error) {
-      // Fallback para agente geral em caso de erro
-      return {
-        targetAgent: AgentType.GENERAL,
-        confidence: 50,
-        reasoning: `Erro no roteamento: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      };
+        return {
+          targetAgent: AgentType.GENERAL,
+          confidence: 50,
+          reasoning: `Routing error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        };
     }
   }
 
   private matchByKeywords(input: string): AgentType | null {
     const lowerInput = input.toLowerCase();
 
-    // Keywords para Simplicity Docs
     const docsKeywords = [
-      'o que é',
-      'como funciona',
-      'explicar',
-      'documentação',
-      'conceito',
-      'dúvida',
-      'pergunta',
-      'o que',
-      'qual',
+      'what is',
+      'how does',
+      'explain',
+      'documentation',
+      'concept',
+      'question',
+      'what',
+      'which',
+      'formal verification',
+      'covenant',
+      'bitcoin smart contract',
+      'simplicity language',
     ];
 
-    // Keywords para Simplicity Code
     const codeKeywords = [
-      'código',
       'code',
-      'exemplo',
-      'implementação',
+      'example',
+      'implementation',
       'github',
-      'repositório',
-      'mostre',
-      'como fazer',
-      'como criar',
-      'contrato',
+      'repository',
+      'show',
+      'how to',
+      'create',
+      'contract',
       'smart contract',
+      'deploy',
+      'compile',
+      'debug',
+      'optimize',
+      'write',
     ];
 
     const hasDocsKeywords = docsKeywords.some((keyword) => lowerInput.includes(keyword));
     const hasCodeKeywords = codeKeywords.some((keyword) => lowerInput.includes(keyword));
 
-    // Se tem keywords de código, prioriza código
     if (hasCodeKeywords) {
       return AgentType.SIMPLICITY_CODE;
     }
 
-    // Se tem keywords de docs, usa docs
     if (hasDocsKeywords) {
       return AgentType.SIMPLICITY_DOCS;
     }
