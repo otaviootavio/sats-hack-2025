@@ -1,5 +1,6 @@
 "use client";
 import React from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { api } from "~/trpc/react";
@@ -44,8 +45,14 @@ export default function ChatSidebar({
           </Button>
         </div>
         <div>
-          <Button asChild variant="outline" size="sm">
-            <Link href="/playground/ai-agent">Try using our AI</Link>
+          <Button
+            asChild
+            size="sm"
+            className="group relative max-w-full overflow-hidden border-0 bg-linear-to-r from-purple-600 via-violet-600 to-indigo-600 text-white shadow-lg shadow-purple-500/50 transition-all duration-300 hover:shadow-xl hover:shadow-purple-500/60 hover:scale-[1.02] before:absolute before:inset-0 before:-translate-x-full before:animate-[shimmer_2s_infinite] before:bg-linear-to-r before:from-transparent before:via-white/20 before:to-transparent"
+          >
+            <Link href="/playground/ai-agent" className="relative z-10">
+              ✨ Try using our AI
+            </Link>
           </Button>
         </div>
       </div>
@@ -58,7 +65,7 @@ export default function ChatSidebar({
               key={c.id}
               href={href}
               className={cn(
-                "block truncate px-3 py-2 text-sm font-medium transition-colors rounded-md",
+                "block truncate rounded-md px-3 py-2 text-sm font-medium transition-colors",
                 active
                   ? "text-foreground bg-accent"
                   : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
@@ -108,9 +115,11 @@ export default function ChatSidebar({
           >
             <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gray-300">
               {userImage ? (
-                <img
+                <Image
                   src={userImage}
                   alt={userName ?? "User"}
+                  width={32}
+                  height={32}
                   className="h-full w-full object-cover"
                 />
               ) : (
