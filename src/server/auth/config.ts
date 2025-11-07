@@ -1,6 +1,8 @@
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { type DefaultSession, type NextAuthConfig } from "next-auth";
+import Credentials from "next-auth/providers/credentials";
 import GitHub from "next-auth/providers/github";
+import { hash } from "bcryptjs";
 import { env } from "~/env";
 // import DiscordProvider from "next-auth/providers/discord";
 
@@ -33,7 +35,61 @@ declare module "next-auth" {
  * @see https://next-auth.js.org/configuration/options
  */ 
 export const authConfig = {
+  session: {
+    strategy: "jwt",
+  },
   providers: [
+    Credentials({
+      name: "Credentials",
+      credentials: {
+        username: {
+          label: "Username",
+          type: "text",
+          placeholder: "satoshi",
+        },
+        password: {
+          label: "Password",
+          type: "password",
+        },
+      },
+      async authorize(credentials) {
+        if (!credentials?.username || !credentials?.password) {
+          return null;
+        }
+
+        const { username, password } = credentials;
+
+        if (typeof username !== "string" || typeof password !== "string") {
+          return null;
+        }
+
+        const normalizedUsername = username.trim();
+
+        if (!normalizedUsername) {
+          return null;
+        }
+
+        const user = await db.user.findUnique({
+          where: { username: normalizedUsername },
+        });
+
+        if (!user?.passwordHash || !user.passwordSalt) {
+          return null;
+        }
+
+        const hashedPassword = await hash(password, user.passwordSalt);
+
+        if (hashedPassword !== user.passwordHash) {
+          return null;
+        }
+
+        return {
+          id: user.id,
+          name: user.name ?? user.username ?? undefined,
+          email: user.email ?? undefined,
+        };
+      },
+    }),
     GitHub({
       clientId: env.GITHUB_CLIENT_ID,
       clientSecret: env.GITHUB_CLIENT_SECRET,
@@ -50,13 +106,17 @@ export const authConfig = {
      */
   ],
   adapter: PrismaAdapter(db),
+  pages: {
+    signIn: "/login",
+    signOut: "/logout",
+  },
   callbacks: {
-    session: ({ session, user }) => ({
-      ...session,
-      user: {
-        ...session.user,
-        id: user.id,
-      },
-    }),
+    session: ({ session, token }) => {
+      if (session.user && token?.sub) {
+        session.user.id = token.sub ?? session.user.id;
+      }
+
+      return session;
+    },
   },
 } satisfies NextAuthConfig;
