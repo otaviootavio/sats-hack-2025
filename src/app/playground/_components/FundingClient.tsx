@@ -134,15 +134,6 @@ export default function FundingClient({ chatId }: { chatId: string }) {
           : Math.round(parseFloat(highlightBtcString) * 1e8);
       return { txid: fundingTxId, voutIndex: selected.voutIndex, valueSats: sats };
     }
-    const voutItems: FundingVout[] = data.vout ?? [];
-    const match = voutItems.find((o) => o.valueBtc === highlightBtcString);
-    if (match && typeof match.n === 'number') {
-      const sats =
-        typeof match.valueSats === 'number'
-          ? match.valueSats
-          : Math.round(parseFloat(highlightBtcString) * 1e8);
-      return { txid: fundingTxId, voutIndex: match.n, valueSats: sats };
-    }
     return null;
   }, [fundingTxQuery.data, fundingTxId, highlightBtcString]);
 

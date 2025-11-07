@@ -3,8 +3,16 @@ import React from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { api } from "~/trpc/react";
+import { Button } from "~/components/ui/button";
+import { cn } from "~/lib/utils";
 
-export default function ChatSidebar({ userName, userImage }: { userName?: string; userImage?: string }) {
+export default function ChatSidebar({
+  userName,
+  userImage,
+}: {
+  userName?: string;
+  userImage?: string;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = React.useState(false);
@@ -29,22 +37,16 @@ export default function ChatSidebar({ userName, userImage }: { userName?: string
 
   return (
     <div className="flex h-screen w-72 flex-col border-r">
-      <div className="flex flex-col justify-start gap-2 p-3 mb-5">
+      <div className="mb-5 flex flex-col justify-start gap-2 p-3">
         <div>
-          <button
-            onClick={() => createMutation.mutate({})}
-            className="btn rounded bg-sky-600 px-3 py-1 text-white"
-          >
+          <Button onClick={() => createMutation.mutate({})} size="sm">
             New chat
-          </button>
+          </Button>
         </div>
         <div>
-          <Link
-            href="/playground/ai-agent"
-            className="btn rounded border px-3 py-1 text-sm hover:bg-gray-50"
-          >
-            Try using our AI
-          </Link>
+          <Button asChild variant="outline" size="sm">
+            <Link href="/playground/ai-agent">Try using our AI</Link>
+          </Button>
         </div>
       </div>
       <div className="flex-1 overflow-auto">
@@ -55,7 +57,12 @@ export default function ChatSidebar({ userName, userImage }: { userName?: string
             <Link
               key={c.id}
               href={href}
-              className={`block truncate px-3 py-2 text-sm ${active ? "bg-sky-100 text-sky-900" : "hover:bg-gray-200"}`}
+              className={cn(
+                "block truncate px-3 py-2 text-sm font-medium transition-colors rounded-md",
+                active
+                  ? "text-foreground bg-accent"
+                  : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
+              )}
             >
               {c.title || "Untitled"}
             </Link>
@@ -65,23 +72,27 @@ export default function ChatSidebar({ userName, userImage }: { userName?: string
           <div className="p-3 text-sm text-gray-500">No chats yet.</div>
         )}
       </div>
-      <div className="border-t p-3">
-        <button
-          onClick={() => listQuery.fetchNextPage()}
-          disabled={!listQuery.hasNextPage || listQuery.isFetchingNextPage}
-          className="btn w-full rounded border px-3 py-1 disabled:opacity-50"
-        >
-          {listQuery.isFetchingNextPage
-            ? "Loading…"
-            : listQuery.hasNextPage
-              ? "Load more"
-              : "No more"}
-        </button>
-      </div>
+      {listQuery.hasNextPage && (
+        <div className="border-t p-3">
+          <Button
+            onClick={() => listQuery.fetchNextPage()}
+            disabled={!listQuery.hasNextPage || listQuery.isFetchingNextPage}
+            variant="outline"
+            size="sm"
+            className="w-full"
+          >
+            {listQuery.isFetchingNextPage
+              ? "Loading…"
+              : listQuery.hasNextPage
+                ? "Load more"
+                : ""}
+          </Button>
+        </div>
+      )}
       <div className="border-t p-3">
         <div className="relative">
           {menuOpen && (
-            <div className="absolute bottom-full left-0 right-0 mb-1 rounded-lg border border-gray-200 bg-white shadow-lg">
+            <div className="absolute right-0 bottom-full left-0 mb-1 rounded-lg border border-gray-200 bg-white shadow-lg">
               <Link
                 href="/api/auth/signout"
                 className="block rounded-lg px-4 py-2.5 text-sm text-gray-700 transition-colors hover:bg-gray-100"
@@ -95,9 +106,13 @@ export default function ChatSidebar({ userName, userImage }: { userName?: string
             onClick={() => setMenuOpen((v) => !v)}
             className="flex w-full items-center gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-gray-100"
           >
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-300 overflow-hidden">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gray-300">
               {userImage ? (
-                <img src={userImage} alt={userName ?? "User"} className="h-full w-full object-cover" />
+                <img
+                  src={userImage}
+                  alt={userName ?? "User"}
+                  className="h-full w-full object-cover"
+                />
               ) : (
                 <span className="text-sm font-medium text-gray-600">
                   {(userName ?? "U").charAt(0).toUpperCase()}

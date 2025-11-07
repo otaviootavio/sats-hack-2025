@@ -22,10 +22,11 @@ export function DebouncedTitleInput({ chatId, initialTitle }: DebouncedTitleInpu
     setTitle(initialTitle);
   }, [initialTitle]);
 
+  const utils = api.useUtils();
   const { mutate: updateChatMutate } = api.chat.update.useMutation({
-    onSuccess: () => {
+    onSuccess: async () => {
       dirtyRef.current = false;
-      // Optionally invalidate queries if needed, but not essential for just title updates
+      await utils.chat.list.invalidate();
     },
   });
 

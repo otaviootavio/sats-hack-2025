@@ -6,7 +6,7 @@ import { hexToBytes, bytesToHex } from "@noble/hashes/utils.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { hmac } from "@noble/hashes/hmac.js";
 
-import type { Prisma } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { FundingStatus } from "@prisma/client";
 
 // Configure noble sync hashes (required for sync schnorr/ecdsa operations)
@@ -18,7 +18,142 @@ import {
   protectedProcedure,
 } from "~/server/api/trpc";
 
-const HIGHLIGHT_BTC = "0.00100000";
+const HIGHLIGHT_SATS = 100_000; // 0.001 BTC in sats
+
+const formatSatsToBtcString = (sats: number): string => (sats / 1e8).toFixed(8);
+
+const blockstreamVoutSchema = z.object({
+  value: z.number().optional().nullable(),
+  scriptpubkey: z.string().optional().nullable(),
+  scriptpubkey_asm: z.string().optional().nullable(),
+  scriptpubkey_type: z.string().optional().nullable(),
+  scriptpubkey_address: z.string().optional().nullable(),
+  valuecommitment: z.string().optional().nullable(),
+  asset: z.string().optional().nullable(),
+  assetcommitment: z.string().optional().nullable(),
+  noncecommitment: z.string().optional().nullable(),
+  nonce: z.string().optional().nullable(),
+});
+
+const blockstreamTxSchema = z.object({
+  txid: z.string(),
+  vin: z.array(z.object({
+    txid: z.string(),
+    vout: z.number(),
+  })),
+  vout: z.array(blockstreamVoutSchema),
+});
+
+type BlockstreamVin = { txid: string; vout: number };
+type BlockstreamVout = {
+  n: number;
+  valueSats: number | null;
+  valueBtc: string | null;
+  scriptPubKey: string | null;
+  scriptPubKeyAsm: string | null;
+  scriptPubKeyType: string | null;
+  scriptPubKeyAddress: string | null;
+  valueCommitment: string | null;
+  assetId: string | null;
+  assetCommitment: string | null;
+  nonceCommitment: string | null;
+};
+type BlockstreamTx = {
+  txid: string;
+  vin: BlockstreamVin[];
+  vout: BlockstreamVout[];
+};
+
+class BlockstreamTxError extends Error {
+  constructor(public readonly code: "FETCH_FAILED" | "PARSE_FAILED") {
+    super(code);
+    this.name = "BlockstreamTxError";
+  }
+}
+
+const fetchBlockstreamTx = async (txid: string): Promise<BlockstreamTx> => {
+  const normalizedTxid = txid.trim().toLowerCase();
+  const res = await fetch(`https://blockstream.info/liquidtestnet/api/tx/${normalizedTxid}`, {
+    method: "GET",
+  });
+  if (!res.ok) {
+    throw new BlockstreamTxError("FETCH_FAILED");
+  }
+  const json: unknown = await res.json();
+  try {
+    const parsed = blockstreamTxSchema.parse(json);
+    return {
+      txid: parsed.txid.toLowerCase(),
+      vin: parsed.vin.map(v => ({ ...v, txid: v.txid.toLowerCase() })),
+      vout: parsed.vout.map((o, n) => {
+        const valueSats = o.value ?? null;
+        return {
+          n,
+          valueSats,
+          valueBtc: valueSats !== null ? formatSatsToBtcString(valueSats) : null,
+          scriptPubKey: o.scriptpubkey ?? null,
+          scriptPubKeyAsm: o.scriptpubkey_asm ?? null,
+          scriptPubKeyType: o.scriptpubkey_type ?? null,
+          scriptPubKeyAddress: o.scriptpubkey_address ?? null,
+          valueCommitment: o.valuecommitment ?? null,
+          assetId: o.asset?.toLowerCase() ?? null,
+          assetCommitment: o.assetcommitment ?? null,
+          nonceCommitment: o.noncecommitment ?? o.nonce ?? null,
+        };
+      }),
+    };
+  } catch {
+    throw new BlockstreamTxError("PARSE_FAILED");
+  }
+};
+
+const findHighlightedOutput = (vout: BlockstreamVout[]): BlockstreamVout | null =>
+  vout.find((entry) => entry.valueSats !== null && entry.valueSats === HIGHLIGHT_SATS) ?? null;
+
+// Helper: extract txid from faucet HTML response
+function extractTxIdFromFaucetResponse(body: string): string | null {
+  const regex = /with transaction\s+([0-9a-fA-F]{64})/;
+  return regex.exec(body)?.[1]?.toLowerCase() ?? null;
+}
+
+// Helper: fetch tx from Blockstream, persist snapshot & selection, and return standard shape
+// Note: Accept both Prisma.TransactionClient and PrismaClient shapes
+async function fetchAndPersistFundingTx(
+  db: Prisma.TransactionClient | PrismaClient,
+  chatId: string,
+  fundingTxId: string,
+) {
+  const tx = await fetchBlockstreamTx(fundingTxId);
+  const selected = findHighlightedOutput(tx.vout);
+
+  await db.chat.update({
+    where: { id: chatId },
+    data: {
+      fundingTxSnapshot: tx as Prisma.InputJsonValue,
+      fundingUtxoVout: selected?.n ?? null,
+      fundingUtxoValueSats: selected?.valueSats ?? null,
+      fundingUtxoNonceHex: selected?.nonceCommitment ?? null,
+      fundingStatus: selected
+        ? FundingStatus.COMPLETED
+        : FundingStatus.AWAITING_CONFIRMATION,
+    },
+  });
+
+  return {
+    ok: true as const,
+    txid: tx.txid,
+    vin: tx.vin,
+    vout: tx.vout,
+    fundingTxId,
+    selected: selected
+      ? {
+          voutIndex: selected.n,
+          valueSats: selected.valueSats ?? null,
+          nonceHex: selected.nonceCommitment ?? null,
+        }
+      : null,
+  } as const;
+}
 
 export const chatRouter = createTRPCRouter({
   // --- Wallet endpoints (POC) ---
@@ -324,12 +459,7 @@ export const chatRouter = createTRPCRouter({
       try {
         const response = await fetch(faucetUrl, { method: "GET" });
         const body = await response.text();
-        // Try to extract the transaction id from the response HTML
-        // Example line:
-        // Sent 100000 sats to address <addr> with transaction <txid>.
-        const regex = /with transaction\s+([0-9a-fA-F]{64})/;
-        const match = regex.exec(body);
-        const fundingTxId = match?.[1]?.toLowerCase() ?? null;
+        const fundingTxId = extractTxIdFromFaucetResponse(body);
 
         await ctx.db.chat.update({
           where: { id: input.chatId },
@@ -370,9 +500,7 @@ export const chatRouter = createTRPCRouter({
       try {
         const response = await fetch(faucetUrl, { method: 'GET' });
         const body = await response.text();
-        const regex = /with transaction\s+([0-9a-fA-F]{64})/;
-        const match = regex.exec(body);
-        const fundingTxId = match?.[1]?.toLowerCase() ?? null;
+        const fundingTxId = extractTxIdFromFaucetResponse(body);
 
         await ctx.db.chat.update({
           where: { id: input.chatId },
@@ -395,31 +523,14 @@ export const chatRouter = createTRPCRouter({
       z.object({ txid: z.string().regex(/^[0-9a-fA-F]{64}$/) })
     )
     .query(async ({ input }) => {
-      const url = `https://blockstream.info/liquidtestnet/api/tx/${input.txid}`;
-      const res = await fetch(url, { method: "GET" });
-      if (!res.ok) {
-        return { ok: false as const };
+      try {
+        const tx = await fetchBlockstreamTx(input.txid);
+        return { ok: true as const, txid: tx.txid, vin: tx.vin, vout: tx.vout };
+      } catch (error) {
+        const code =
+          error instanceof BlockstreamTxError ? error.code : ("FETCH_FAILED" as const);
+        return { ok: false as const, error: code };
       }
-      const json = (await res.json()) as unknown as {
-        txid: string;
-        vin: Array<{ txid: string; vout: number }>;
-        vout: Array<{ value?: number } & Record<string, unknown>>;
-      };
-
-      const vin = (json.vin ?? []).map((v) => ({
-        txid: v.txid,
-        vout: v.vout,
-      }));
-      const vout = (json.vout ?? []).map((o, idx) => {
-        const valueSats = typeof o.value === "number" ? o.value : null;
-        const valueBtc =
-          typeof o.value === "number"
-            ? (o.value / 1e8).toFixed(8)
-            : null;
-        return { n: idx, valueSats, valueBtc };
-      });
-
-      return { ok: true as const, txid: json.txid, vin, vout };
     }),
 
   // Returns cached funding tx for the chat if present; otherwise fetches, persists, and returns it
@@ -441,16 +552,15 @@ export const chatRouter = createTRPCRouter({
       });
       if (!chat) return { ok: false as const, error: "NOT_FOUND" as const };
       if (chat.fundingTxSnapshot) {
-        const snap = chat.fundingTxSnapshot as unknown as {
-          txid: string;
-          vin: Array<{ txid: string; vout: number }>;
-          vout: Array<{ n: number; valueSats: number | null; valueBtc: string | null }>;
-        };
+        const snap = chat.fundingTxSnapshot as unknown as Partial<BlockstreamTx>;
+        const txid = typeof snap?.txid === "string" ? snap.txid : chat.fundingTxId ?? "";
+        const vin = Array.isArray(snap?.vin) ? snap.vin : [];
+        const vout = Array.isArray(snap?.vout) ? snap.vout : [];
         return {
           ok: true as const,
-          txid: snap.txid,
-          vin: snap.vin,
-          vout: snap.vout,
+          txid,
+          vin,
+          vout,
           fundingTxId: chat.fundingTxId ?? null,
           selected: chat.fundingUtxoVout === null || chat.fundingUtxoVout === undefined
             ? null
@@ -465,52 +575,11 @@ export const chatRouter = createTRPCRouter({
 
       // Fetch from Blockstream and persist
       try {
-        const url = `https://blockstream.info/liquidtestnet/api/tx/${chat.fundingTxId}`;
-        const res = await fetch(url, { method: "GET" });
-        if (!res.ok) return { ok: false as const, error: "FETCH_FAILED" as const };
-        const json = (await res.json()) as unknown as {
-          txid: string;
-          vin: Array<{ txid: string; vout: number }>;
-          vout: Array<{ value?: number; nonce?: string } & Record<string, unknown>>;
-        };
-        const vin = (json.vin ?? []).map((v) => ({ txid: v.txid, vout: v.vout }));
-        const vout = (json.vout ?? []).map((o, idx) => {
-          const valueSats = typeof o.value === "number" ? o.value : null;
-          const valueBtc = typeof o.value === "number" ? (o.value / 1e8).toFixed(8) : null;
-          return { n: idx, valueSats, valueBtc };
-        });
-        const selected = vout.find((o) => o.valueBtc === HIGHLIGHT_BTC) ?? null;
-        const selectedIdx = selected?.n ?? null;
-        const selectedSats = selected?.valueSats ?? null;
-        const selectedNonce = (json.vout?.[selectedIdx ?? -1] as { nonce?: string } | undefined)?.nonce ?? null;
-
-        const snapshot = { txid: json.txid, vin, vout };
-        await ctx.db.chat.update({
-          where: { id: input.chatId },
-          data: {
-            fundingTxSnapshot: snapshot as Prisma.InputJsonValue,
-            fundingUtxoVout: selectedIdx,
-            fundingUtxoValueSats: selectedSats,
-            fundingUtxoNonceHex: selectedNonce,
-            fundingStatus:
-              selectedIdx === null
-                ? FundingStatus.AWAITING_CONFIRMATION
-                : FundingStatus.COMPLETED,
-          },
-        });
-
-        return {
-          ok: true as const,
-          txid: json.txid,
-          vin,
-          vout,
-          fundingTxId: chat.fundingTxId,
-          selected: selectedIdx === null
-            ? null
-            : { voutIndex: selectedIdx, valueSats: selectedSats, nonceHex: selectedNonce },
-        } as const;
-      } catch {
-        return { ok: false as const, error: "FETCH_FAILED" as const };
+        return await fetchAndPersistFundingTx(ctx.db, input.chatId, chat.fundingTxId);
+      } catch (error) {
+        const code =
+          error instanceof BlockstreamTxError ? error.code : ("FETCH_FAILED" as const);
+        return { ok: false as const, error: code };
       }
     }),
 
@@ -526,52 +595,11 @@ export const chatRouter = createTRPCRouter({
       if (!chat) return { ok: false as const, error: "NOT_FOUND" as const };
       if (!chat.fundingTxId) return { ok: false as const, error: "NO_TXID" as const };
       try {
-        const url = `https://blockstream.info/liquidtestnet/api/tx/${chat.fundingTxId}`;
-        const res = await fetch(url, { method: "GET" });
-        if (!res.ok) return { ok: false as const, error: "FETCH_FAILED" as const };
-        const json = (await res.json()) as unknown as {
-          txid: string;
-          vin: Array<{ txid: string; vout: number }>;
-          vout: Array<{ value?: number; nonce?: string } & Record<string, unknown>>;
-        };
-        const vin = (json.vin ?? []).map((v) => ({ txid: v.txid, vout: v.vout }));
-        const vout = (json.vout ?? []).map((o, idx) => {
-          const valueSats = typeof o.value === "number" ? o.value : null;
-          const valueBtc = typeof o.value === "number" ? (o.value / 1e8).toFixed(8) : null;
-          return { n: idx, valueSats, valueBtc };
-        });
-        const selected = vout.find((o) => o.valueBtc === HIGHLIGHT_BTC) ?? null;
-        const selectedIdx = selected?.n ?? null;
-        const selectedSats = selected?.valueSats ?? null;
-        const selectedNonce = (json.vout?.[selectedIdx ?? -1] as { nonce?: string } | undefined)?.nonce ?? null;
-
-        const snapshot = { txid: json.txid, vin, vout };
-        await ctx.db.chat.update({
-          where: { id: input.chatId },
-          data: {
-            fundingTxSnapshot: snapshot as Prisma.InputJsonValue,
-            fundingUtxoVout: selectedIdx,
-            fundingUtxoValueSats: selectedSats,
-            fundingUtxoNonceHex: selectedNonce,
-            fundingStatus:
-              selectedIdx === null
-                ? FundingStatus.AWAITING_CONFIRMATION
-                : FundingStatus.COMPLETED,
-          },
-        });
-
-        return {
-          ok: true as const,
-          txid: json.txid,
-          vin,
-          vout,
-          fundingTxId: chat.fundingTxId,
-          selected: selectedIdx === null
-            ? null
-            : { voutIndex: selectedIdx, valueSats: selectedSats, nonceHex: selectedNonce },
-        } as const;
-      } catch {
-        return { ok: false as const, error: "FETCH_FAILED" as const };
+        return await fetchAndPersistFundingTx(ctx.db, input.chatId, chat.fundingTxId);
+      } catch (error) {
+        const code =
+          error instanceof BlockstreamTxError ? error.code : ("FETCH_FAILED" as const);
+        return { ok: false as const, error: code };
       }
     }),
 

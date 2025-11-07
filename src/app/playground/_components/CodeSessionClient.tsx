@@ -6,12 +6,22 @@ import { api } from "~/trpc/react";
 import { PresetSelect } from "~/app/playground/_components/PresetSelect";
 import { PersistentTextArea } from "~/app/playground/_components/PersistentTextArea";
 import { ReadonlyTextArea } from "~/app/playground/_components/ReadonlyTextArea";
-import { AddressActions } from "~/app/playground/_components/AddressActions";
 import { useWasm } from "~/hooks/useWasm";
 import { DebouncedTitleInput } from "~/app/playground/_components/DebouncedTitleInput";
+import { useRouter } from "next/navigation";
+import { Button } from "~/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "~/components/ui/card";
 
 export default function CodeSessionClient({ chatId }: { chatId: string }) {
   const { isInitialized } = useWasm();
+  const router = useRouter();
 
   const [selectedExampleValue, setSelectedExampleValue] = useState("");
   const [source, setSource] = useState("");
@@ -43,7 +53,11 @@ export default function CodeSessionClient({ chatId }: { chatId: string }) {
         setSource(p.simf);
         setArgs(p.args);
         // Persist both source and argsJson immediately when preset is selected
-        void updateChat.mutateAsync({ chatId, source: p.simf, argsJson: p.args });
+        void updateChat.mutateAsync({
+          chatId,
+          source: p.simf,
+          argsJson: p.args,
+        });
         setStatusMessage(`Loaded ${p.label}.`);
         return;
       }
@@ -98,83 +112,120 @@ export default function CodeSessionClient({ chatId }: { chatId: string }) {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:gap-4">
-        <DebouncedTitleInput
-          chatId={chatId}
-          initialTitle={chatData?.title ?? ""}
-        />
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Session Details</CardTitle>
+          <CardDescription>
+            Rename your session and load a preset program to get started.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+            <DebouncedTitleInput
+              chatId={chatId}
+              initialTitle={chatData?.title ?? ""}
+            />
 
-        <PresetSelect
-          value={selectedExampleValue}
-          options={Object.entries(PRESETS).map(([id, p]) => ({
-            value: `preset:${id}`,
-            label: p.label,
-          }))}
-          onChange={(v: string) => {
-            applySelection(v);
-          }}
-          // eslint-disable-next-line @typescript-eslint/no-empty-function
-          onBlur={() => {}}
-        />
-      </div>
-      <div>
-        <div className="mb-2">
-          <label className="block text-sm font-medium">Args JSON</label>
-        </div>
-        <PersistentTextArea
-          chatId={chatId}
-          initialValue={args}
-          onChange={(v) => setArgs(v)}
-          field="argsJson"
-          rows={8}
-          placeholder="Paste args JSON here (optional)"
-          className="w-full rounded border p-2 font-mono text-sm"
-        />
-      </div>
-      <div>
-        <div>
-          <label className="block text-sm font-medium">Source</label>
-        </div>
-        <PersistentTextArea
-          chatId={chatId}
-          initialValue={source}
-          onChange={(v) => setSource(v)}
-          rows={16}
-          placeholder="Paste SimplicityHL source here"
-          className="w-full rounded border p-2 font-mono text-sm"
-        />
-      </div>
+            <PresetSelect
+              value={selectedExampleValue}
+              options={Object.entries(PRESETS).map(([id, p]) => ({
+                value: `preset:${id}`,
+                label: p.label,
+              }))}
+              onChange={(v: string) => {
+                applySelection(v);
+              }}
+              // eslint-disable-next-line @typescript-eslint/no-empty-function
+              onBlur={() => {}}
+            />
+          </div>
+        </CardContent>
+      </Card>
 
-      <AddressActions
-        onGenerate={handleGenerateAddress}
-        onCopy={async () => {
-          if (!address) return;
-          await navigator.clipboard.writeText(address);
-          setStatusMessage("Copied address to clipboard.");
-        }}
-        copyDisabled={!address}
-      />
+      <Card>
+        <CardHeader>
+          <CardTitle>Args JSON</CardTitle>
+          <CardDescription>
+            Optional runtime arguments saved with this session.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <PersistentTextArea
+            chatId={chatId}
+            initialValue={args}
+            onChange={(v) => setArgs(v)}
+            field="argsJson"
+            rows={8}
+            placeholder="Paste args JSON here (optional)"
+            className="w-full rounded border p-2 font-mono text-sm"
+          />
+        </CardContent>
+      </Card>
 
-      <ReadonlyTextArea
-        value={address}
-        rows={2}
-        className="w-full rounded border p-2 font-mono text-sm"
-      />
+      <Card>
+        <CardHeader>
+          <CardTitle>Source</CardTitle>
+          <CardDescription>
+            Paste or edit your SimplicityHL source code. Changes auto-save.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <PersistentTextArea
+            chatId={chatId}
+            initialValue={source}
+            onChange={(v) => setSource(v)}
+            rows={16}
+            placeholder="Paste SimplicityHL source here"
+            className="w-full rounded border p-2 font-mono text-sm"
+          />
+        </CardContent>
+      </Card>
 
-      <div className="space-y-2">
-        <div className="text-muted-foreground text-sm">
-          <p>
-            The address is a taproot P2TR address on Liquid Testnet created from
-            the program&#39;s commitment (CMR) — so identical program text →
-            identical address.
-          </p>
-          <p className="mt-1">
-            If the program text has syntax/compile errors, the address call will
-            fail and show &quot;Invalid program&quot;.
-          </p>
-        </div>
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Derived Address</CardTitle>
+          <CardDescription>
+            Generate the Liquid Testnet taproot address for this program and
+            continue to funding when ready.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <ReadonlyTextArea
+            value={address}
+            rows={2}
+            className="w-full rounded border p-2 font-mono text-sm"
+          />
+          <div className="text-muted-foreground space-y-2 text-sm">
+            <p>
+              The address is derived from the program&#39;s commitment (CMR).
+              Identical program text always yields the same address.
+            </p>
+            <p>
+              If the program has syntax or compile errors, address generation
+              fails and reports &quot;Invalid program&quot;.
+            </p>
+          </div>
+        </CardContent>
+        <CardFooter className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <Button
+            onClick={handleGenerateAddress}
+            variant="outline"
+            size="sm"
+          >
+            Generate Address
+          </Button>
+          {address && (
+            <Button
+              onClick={() => router.push(`/playground/${chatId}/funding`)}
+              size="lg"
+              className="bg-green-500 font-bold text-white shadow-lg shadow-green-400/60 transition-all hover:bg-green-600 hover:shadow-xl hover:shadow-green-400/80 hover:scale-110"
+            >
+              Fund Address
+            </Button>
+          )}
+        </CardFooter>
+      </Card>
     </div>
   );
 }

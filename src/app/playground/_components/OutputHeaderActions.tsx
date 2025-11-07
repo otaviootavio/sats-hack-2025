@@ -1,4 +1,5 @@
 import React from 'react'
+import { Button } from '~/components/ui/button'
 
 export function OutputHeaderActions({
   onCopyProgram,
@@ -15,9 +16,9 @@ export function OutputHeaderActions({
 }) {
   return (
     <div className="flex gap-2 ml-auto">
-      <button onClick={onCopyProgram} disabled={!!disableProgram} className="btn border px-3 py-1 rounded">Copy Program</button>
-      <button onClick={onCopyWitness} disabled={!!disableWitness} className="btn border px-3 py-1 rounded">Copy Witness</button>
-      <button onClick={onDownloadJson} disabled={!!disableProgram} className="btn border px-3 py-1 rounded">Download JSON</button>
+      <Button onClick={onCopyProgram} disabled={!!disableProgram} variant="outline" size="sm">Copy Program</Button>
+      <Button onClick={onCopyWitness} disabled={!!disableWitness} variant="outline" size="sm">Copy Witness</Button>
+      <Button onClick={onDownloadJson} disabled={!!disableProgram} variant="outline" size="sm">Download JSON</Button>
     </div>
   )
 }

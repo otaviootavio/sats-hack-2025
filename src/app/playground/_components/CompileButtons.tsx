@@ -1,4 +1,5 @@
 import React from 'react'
+import { Button } from '~/components/ui/button'
 
 export function CompileButtons({
   onCompile,
@@ -9,8 +10,8 @@ export function CompileButtons({
 }) {
   return (
     <div className="flex gap-2 mt-3 sm:mt-0">
-      <button onClick={onCompile} className="btn bg-sky-600 text-white px-3 py-1 rounded">Compile</button>
-      <button onClick={onCompileWithWitness} className="btn border px-3 py-1 rounded">Compile + Witness</button>
+      <Button onClick={onCompile} size="sm">Compile</Button>
+      <Button onClick={onCompileWithWitness} variant="outline" size="sm">Compile + Witness</Button>
     </div>
   )
 }

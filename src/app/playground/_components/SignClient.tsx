@@ -1,10 +1,16 @@
 "use client";
 import React, { useEffect, useState } from "react";
+import { Button } from "~/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "~/components/ui/card";
 import initWasmBindings, { compile_source, compile_source_with_args } from "~/pkg/simplicityhl_wasm.js";
 import { api } from "~/trpc/react";
-import type { RouterOutputs } from "~/trpc/react";
 
-type ChatGet = RouterOutputs["chat"]["get"]; // may be null
 type JsonEntry = { value: string; type: string };
 type JsonMap = Record<string, JsonEntry>;
 
@@ -215,100 +221,132 @@ export default function SignClient({ chatId }: { chatId: string }) {
   })();
 
   return (
-    <div className="space-y-4">
-      {/* Wallet */}
-      <div className="mt-2 space-y-3">
-        <label className="block text-sm font-medium">Wallet (per chat, server-backed)</label>
-        <div className="flex gap-2">
-          <button
-            onClick={() => createWalletMutate({ chatId, reset: true })}
-            disabled={isCreatingWallet}
-            className="btn border px-3 py-1 rounded"
-          >
-            {walletQuery.data?.pubHex ? "Reset Wallet" : "Create Wallet"}
-          </button>
-          <button
-            onClick={injectPubkeyIntoArgs}
-            disabled={!walletQuery.data?.pubHex}
-            className="btn border px-3 py-1 rounded"
-          >
-            Use pubkey in .args
-          </button>
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <input
-            value={walletQuery.data?.pubHex ?? ""}
-            readOnly
-            placeholder="Pubkey (x-only) 0x..."
-            className="w-full rounded border p-2 text-sm font-mono"
-          />
-          <input
-            value={walletQuery.data?.pubHex ? "Stored on server (encrypted)" : ""}
-            readOnly
-            placeholder="No wallet yet"
-            className="w-full rounded border p-2 text-sm font-mono"
-          />
-        </div>
-        <p className="text-xs text-muted-foreground">POC: encrypted per-chat wallet on server. Testnet only.</p>
-      </div>
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Wallet</CardTitle>
+          <CardDescription>
+            Per-chat server-backed wallet used when compiling and signing.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={() => createWalletMutate({ chatId, reset: true })}
+              disabled={isCreatingWallet}
+              variant="outline"
+              size="sm"
+            >
+              {walletQuery.data?.pubHex ? "Reset Wallet" : "Create Wallet"}
+            </Button>
+            <Button
+              onClick={injectPubkeyIntoArgs}
+              disabled={!walletQuery.data?.pubHex}
+              variant="outline"
+              size="sm"
+            >
+              Use pubkey in .args
+            </Button>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <input
+              value={walletQuery.data?.pubHex ?? ""}
+              readOnly
+              placeholder="Pubkey (x-only) 0x..."
+              className="w-full rounded border p-2 text-sm font-mono"
+            />
+            <input
+              value={walletQuery.data?.pubHex ? "Stored on server (encrypted)" : ""}
+              readOnly
+              placeholder="No wallet yet"
+              className="w-full rounded border p-2 text-sm font-mono"
+            />
+          </div>
+        </CardContent>
+      </Card>
 
-      {/* UTXO card */}
-      <div className="mt-2 space-y-3">
-        <label className="block text-sm font-medium">UTXO</label>
-        <div className="rounded border p-3 text-sm">
-          <div className="mb-1 font-medium">Stored selection</div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <div className="text-muted-foreground">txid</div>
-              <div className="break-all">{chatData?.fundingTxId ?? "—"}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground">vout</div>
-              <div>{typeof chatData?.fundingUtxoVout === "number" ? chatData.fundingUtxoVout : "—"}</div>
-            </div>
-            <div>
-              <div className="text-muted-foreground">value (sats)</div>
-              <div>{typeof chatData?.fundingUtxoValueSats === "number" ? chatData.fundingUtxoValueSats : "—"}</div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Funding UTXO</CardTitle>
+          <CardDescription>
+            Review the stored selection or provide overrides before signing.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <div className="mb-2 text-sm font-medium">Stored selection</div>
+            <div className="grid grid-cols-1 gap-3 rounded border p-3 text-sm sm:grid-cols-3">
+              <div>
+                <div className="text-muted-foreground">txid</div>
+                <div className="break-all">{chatData?.fundingTxId ?? "—"}</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">vout</div>
+                <div>{typeof chatData?.fundingUtxoVout === "number" ? chatData.fundingUtxoVout : "—"}</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">value (sats)</div>
+                <div>{typeof chatData?.fundingUtxoValueSats === "number" ? chatData.fundingUtxoValueSats : "—"}</div>
+              </div>
             </div>
           </div>
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <input
+              value={utxoTxidInput}
+              onChange={(e) => { setUtxoTxidInput(e.target.value); setUtxoTouched(true); }}
+              placeholder="Override txid (64 hex)"
+              className="w-full rounded border p-2 text-sm font-mono"
+            />
+            <input
+              value={utxoVoutInput}
+              onChange={(e) => { setUtxoVoutInput(e.target.value); setUtxoTouched(true); }}
+              placeholder="Override vout"
+              className="w-full rounded border p-2 text-sm"
+            />
+            <input
+              value={typeof chatData?.fundingUtxoValueSats === "number" ? String(chatData.fundingUtxoValueSats) : ""}
+              readOnly
+              placeholder="Value (sats) — from DB"
+              className="w-full rounded border p-2 text-sm"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Signature</CardTitle>
+          <CardDescription>
+            Compile, sign, and capture Sig 0 for this funding transaction.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={handleSign} disabled={!walletQuery.data?.pubHex || !hasUtxoForSign || isSigning} size="sm">
+              Sign (Sig 0)
+            </Button>
+            <Button onClick={async () => { if (!sig0Hex) return; await navigator.clipboard.writeText(sig0Hex); setStatusMessage("Copied Sig 0 to clipboard."); }} disabled={!sig0Hex} variant="outline" size="sm">
+              Copy Sig 0
+            </Button>
+          </div>
           <input
-            value={utxoTxidInput}
-            onChange={(e) => { setUtxoTxidInput(e.target.value); setUtxoTouched(true); }}
-            placeholder="Override txid (64 hex)"
+            value={sig0Hex}
+            readOnly
+            placeholder="Sig 0 (generated via server wallet)"
             className="w-full rounded border p-2 text-sm font-mono"
           />
-          <input
-            value={utxoVoutInput}
-            onChange={(e) => { setUtxoVoutInput(e.target.value); setUtxoTouched(true); }}
-            placeholder="Override vout"
-            className="w-full rounded border p-2 text-sm"
-          />
-          <input
-            value={typeof chatData?.fundingUtxoValueSats === "number" ? String(chatData.fundingUtxoValueSats) : ""}
-            readOnly
-            placeholder="Value (sats) — from DB"
-            className="w-full rounded border p-2 text-sm"
-          />
-        </div>
-      </div>
+        </CardContent>
+      </Card>
 
-      {/* Signature */}
-      <div className="space-y-2">
-        <div className="flex gap-2">
-          <button onClick={handleSign} disabled={!walletQuery.data?.pubHex || !hasUtxoForSign || isSigning} className="btn border px-3 py-1 rounded disabled:opacity-50">Sign (Sig 0)</button>
-          <button onClick={async () => { if (!sig0Hex) return; await navigator.clipboard.writeText(sig0Hex); setStatusMessage("Copied Sig 0 to clipboard."); }} disabled={!sig0Hex} className="btn border px-3 py-1 rounded disabled:opacity-50">Copy Sig 0</button>
-        </div>
-        <input
-          value={sig0Hex}
-          readOnly
-          placeholder="Sig 0 (generated via server wallet)"
-          className="w-full rounded border p-2 text-sm font-mono"
-        />
-      </div>
-
-      <pre className="rounded bg-gray-100 p-3 text-sm whitespace-pre-wrap">{statusMessage || loadingMessage}</pre>
+      <Card>
+        <CardHeader>
+          <CardTitle>Status</CardTitle>
+          <CardDescription>Progress and debug output from WASM and signing.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <pre className="rounded bg-gray-100 p-3 text-sm whitespace-pre-wrap">{statusMessage || loadingMessage}</pre>
+        </CardContent>
+      </Card>
     </div>
   );
 }

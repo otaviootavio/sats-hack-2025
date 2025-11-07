@@ -11,11 +11,10 @@ export default async function ChatStepLayout({
   void api.chat.setActive({ chatId });
   return (
     <>
-      {/* Also set on the client for SPA transitions */}
-      <div className="px-6 max-w-4xl mx-auto">
-        <StepNav chatId={chatId} />
+      <StepNav chatId={chatId} />
+      <div className="pt-3">
+        {children}
       </div>
-      {children}
     </>
   )
 }
