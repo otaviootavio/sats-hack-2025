@@ -32,7 +32,7 @@ export function loadSimplicityExamples(): SimplicityExample[] {
 
   const files = readdirSync(examplesDir);
   
-  const examples: Map<string, SimplicityExample> = new Map();
+  const examples = new Map<string, SimplicityExample>();
 
   for (const file of files) {
     const baseName = file.replace(/\.(simf|wit|args)$/, '').replace(/\.(transfer|timeout|complete|inherit)$/, '');
@@ -51,8 +51,8 @@ export function loadSimplicityExamples(): SimplicityExample[] {
 
     if (file.endsWith('.simf')) {
       example.code = content;
-      const commentMatch = content.match(/\/\*\s*\*\s*(.+?)\s*\*\//s);
-      if (commentMatch && commentMatch[1]) {
+      const commentMatch = /\/\*\s*\*\s*(.+?)\s*\*\//s.exec(content);
+      if (commentMatch?.[1]) {
         example.description = commentMatch[1]
           .split('\n')
           .map(line => line.replace(/^\s*\*\s*/, '').trim())
@@ -78,7 +78,7 @@ export function findRelevantExamples(query: string, examples: SimplicityExample[
   return examples
     .map(example => {
       let score = 0;
-      const description = example.description || '';
+      const description = example.description ?? '';
       const searchText = `${example.name} ${description} ${example.code}`.toLowerCase();
 
       for (const keyword of keywords) {

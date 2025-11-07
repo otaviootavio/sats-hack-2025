@@ -50,7 +50,7 @@ export class SimplicityWorkflow {
   async *processStreaming(
     input: string,
     context: AgentContext,
-  ): AsyncGenerator<{ type: string; data: any }, void, unknown> {
+  ): AsyncGenerator<{ type: string; data: unknown }, void, unknown> {
     try {
       yield {
         type: 'thinking',
@@ -97,11 +97,11 @@ export class SimplicityWorkflow {
           break;
       }
 
-      for (let i = 0; i < processingMessages.length; i++) {
+      for (const message of processingMessages) {
         yield {
           type: 'thinking',
           data: {
-            message: processingMessages[i],
+            message,
           },
         };
         await new Promise((resolve) => setTimeout(resolve, 400 + Math.random() * 300));

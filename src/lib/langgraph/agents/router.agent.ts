@@ -13,7 +13,7 @@ export class RouterAgent {
     });
   }
 
-  async route(input: string, context: AgentContext): Promise<RoutingDecision> {
+  async route(input: string, _context: AgentContext): Promise<RoutingDecision> {
     try {
       const keywordMatch = this.matchByKeywords(input);
       if (keywordMatch) {
@@ -35,7 +35,7 @@ export class RouterAgent {
         },
       ]);
 
-      const agentChoice = String(response.content).trim().toUpperCase();
+      const agentChoice = (typeof response.content === "string" ? response.content : "").trim().toUpperCase();
       let targetAgent: AgentType;
       let confidence: number;
 

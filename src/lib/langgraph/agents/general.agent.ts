@@ -67,7 +67,7 @@ export class GeneralAgent {
       return {
         success: true,
         agentType: this.agentType,
-        response: String(response.content),
+        response: typeof response.content === "string" ? response.content : "",
       };
     } catch (error) {
       return {

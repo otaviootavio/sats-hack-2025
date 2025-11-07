@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { type CSSProperties, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -23,10 +23,17 @@ export function MessageContent({ content, isUser }: MessageContentProps) {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          code({ className, children, ...props }: any) {
-            const match = /language-(\w+)/.exec(className || "");
+          code({ className, children, ...props }: { className?: string; children?: ReactNode }) {
+            const match = /language-(\w+)/.exec(className ?? "");
             const language = match ? match[1] : "";
-            const codeString = String(children).replace(/\n$/, "");
+            const codeString = React.Children.toArray(children)
+              .reduce<string>((acc, child) => {
+                if (typeof child === "string" || typeof child === "number") {
+                  return acc + child;
+                }
+                return acc;
+              }, "")
+              .replace(/\n$/, "");
             const isInline = !match;
 
             return !isInline && language ? (
@@ -35,7 +42,7 @@ export function MessageContent({ content, isUser }: MessageContentProps) {
                   {language}
                 </div>
                 <SyntaxHighlighter
-                  style={vscDarkPlus as any}
+                  style={vscDarkPlus as Record<string, CSSProperties>}
                   language={language}
                   PreTag="div"
                   customStyle={{

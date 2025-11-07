@@ -25,6 +25,15 @@ type Message = {
   content: string;
 };
 
+interface StreamEvent {
+  type: 'thinking' | 'text' | 'done' | 'error';
+  data: {
+    message?: string;
+    accumulated?: string;
+    error?: string;
+  };
+}
+
 const initialMessages: Message[] = [
   {
     id: "welcome",
@@ -115,15 +124,15 @@ export default function AiAgentPage() {
 
           for (const line of lines) {
             try {
-              const event = JSON.parse(line);
+              const event = JSON.parse(line) as StreamEvent;
               
               if (event.type === "thinking") {
                 // Atualiza mensagem de pensamento
-                setThinkingMessage(event.data.message || "");
+                setThinkingMessage(event.data.message ?? "");
               } else if (event.type === "text") {
                 // Quando começa a receber texto, limpa mensagem de pensamento
                 setThinkingMessage("");
-                accumulatedText = event.data.accumulated;
+                accumulatedText = event.data.accumulated ?? "";
                 setMessages((prev) =>
                   prev.map((msg) =>
                     msg.id === assistantMessageId
@@ -136,9 +145,9 @@ export default function AiAgentPage() {
                 setIsSending(false);
               } else if (event.type === "error") {
                 setThinkingMessage("");
-                throw new Error(event.data.error || "Unknown error");
+                throw new Error(event.data.error ?? "Unknown error");
               }
-            } catch (parseError) {
+            } catch (parseError: unknown) {
               // Ignora erros de parsing de linhas incompletas
             }
           }
@@ -228,7 +237,7 @@ export default function AiAgentPage() {
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
-                handleSend(
+                void handleSend(
                   event as unknown as React.FormEvent<HTMLFormElement>,
                 );
               }

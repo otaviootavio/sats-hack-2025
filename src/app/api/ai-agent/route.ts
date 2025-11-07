@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { type NextRequest, NextResponse } from 'next/server';
 import { SimplicityWorkflow } from '~/lib/langgraph/workflow';
 import type { AgentContext } from '~/lib/langgraph/types';
 import { env } from '~/env';
@@ -6,9 +6,17 @@ import { env } from '~/env';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+interface RequestBody {
+  message?: string;
+  conversationHistory?: Array<{
+    role: 'user' | 'assistant';
+    content: string;
+  }>;
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    const body = (await request.json()) as RequestBody;
     const { message, conversationHistory = [] } = body;
 
     if (!message || typeof message !== 'string') {
@@ -29,7 +37,7 @@ export async function POST(request: NextRequest) {
 
     // Cria contexto do agente
     const context: AgentContext = {
-      conversationHistory: conversationHistory.map((msg: any) => ({
+      conversationHistory: conversationHistory.map((msg: { role: 'user' | 'assistant'; content: string }) => ({
         role: msg.role,
         content: msg.content,
       })),
