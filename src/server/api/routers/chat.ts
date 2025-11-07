@@ -6,6 +6,9 @@ import { hexToBytes, bytesToHex } from "@noble/hashes/utils.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { hmac } from "@noble/hashes/hmac.js";
 
+import type { Prisma } from "@prisma/client";
+import { FundingStatus } from "@prisma/client";
+
 // Configure noble sync hashes (required for sync schnorr/ecdsa operations)
 nobleHashes.sha256 ??= (message: Uint8Array) => sha256(message);
 nobleHashes.hmacSha256 ??= (key: Uint8Array, message: Uint8Array) => hmac(sha256, key, message);
@@ -14,6 +17,8 @@ import {
   createTRPCRouter,
   protectedProcedure,
 } from "~/server/api/trpc";
+
+const HIGHLIGHT_BTC = "0.00100000";
 
 export const chatRouter = createTRPCRouter({
   // --- Wallet endpoints (POC) ---
@@ -193,6 +198,7 @@ export const chatRouter = createTRPCRouter({
           witJson: input?.witJson ?? "",
           faucetUrl: input?.faucetUrl ?? null,
           fundingTxId: null,
+          // fundingStatus defaults to NO_ADDRESS (schema default)
         },
         select: { id: true, title: true, createdAt: true, updatedAt: true },
       });
@@ -224,6 +230,7 @@ export const chatRouter = createTRPCRouter({
           fundingUtxoValueSats: true,
           fundingUtxoNonceHex: true,
           address: true,
+          fundingStatus: true,
           createdAt: true,
           updatedAt: true,
         },
@@ -249,24 +256,40 @@ export const chatRouter = createTRPCRouter({
       const userId = ctx.session.user.id;
       const existing = await ctx.db.chat.findFirst({
         where: { id: input.chatId, userId },
-        select: { id: true },
+        select: { id: true, fundingStatus: true },
       });
       if (!existing) return { ok: false as const };
+      const data: Prisma.ChatUpdateInput = {};
+      if (input.title !== undefined) data.title = input.title;
+      if (input.selectedExampleValue !== undefined)
+        data.selectedExampleValue = input.selectedExampleValue;
+      if (input.source !== undefined) data.source = input.source;
+      if (input.argsJson !== undefined) data.argsJson = input.argsJson;
+      if (input.witJson !== undefined) data.witJson = input.witJson;
+      if (input.faucetUrl !== undefined) data.faucetUrl = input.faucetUrl;
+      if (input.fundingTxId !== undefined) data.fundingTxId = input.fundingTxId;
+      if (input.address !== undefined) data.address = input.address;
+
+      // Basic state transitions
+      const currentStatus: FundingStatus = existing.fundingStatus ?? FundingStatus.NO_ADDRESS;
+      if (input.address !== undefined) {
+        if (input.address && currentStatus === FundingStatus.NO_ADDRESS) {
+          data.fundingStatus = FundingStatus.READY_TO_FUND;
+        } else if (!input.address) {
+          // If address cleared, reset to NO_ADDRESS
+          data.fundingStatus = FundingStatus.NO_ADDRESS;
+        }
+      }
+      if (input.faucetUrl !== undefined && input.faucetUrl) {
+        data.fundingStatus = FundingStatus.AWAITING_TXID;
+      }
+      if (input.fundingTxId !== undefined && input.fundingTxId) {
+        data.fundingStatus = FundingStatus.AWAITING_CONFIRMATION;
+      }
 
       await ctx.db.chat.update({
         where: { id: input.chatId },
-        data: {
-          ...(input.title !== undefined ? { title: input.title } : {}),
-          ...(input.selectedExampleValue !== undefined
-            ? { selectedExampleValue: input.selectedExampleValue }
-            : {}),
-          ...(input.source !== undefined ? { source: input.source } : {}),
-          ...(input.argsJson !== undefined ? { argsJson: input.argsJson } : {}),
-          ...(input.witJson !== undefined ? { witJson: input.witJson } : {}),
-          ...(input.faucetUrl !== undefined ? { faucetUrl: input.faucetUrl } : {}),
-          ...(input.fundingTxId !== undefined ? { fundingTxId: input.fundingTxId } : {}),
-          ...(input.address !== undefined ? { address: input.address } : {}),
-        },
+        data,
       });
       return { ok: true as const };
     }),
@@ -312,12 +335,58 @@ export const chatRouter = createTRPCRouter({
           where: { id: input.chatId },
           data: {
             fundingTxId,
+            fundingStatus: fundingTxId
+              ? FundingStatus.AWAITING_CONFIRMATION
+              : FundingStatus.AWAITING_TXID,
           },
         });
 
         return { ok: true as const, fundingTxId };
       } catch {
         return { ok: false as const, error: "FETCH_FAILED" as const };
+      }
+    }),
+
+  // Initiates funding: constructs faucet URL, fetches it, extracts txid, and updates status
+  initiateFunding: protectedProcedure
+    .input(z.object({ chatId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.session.user.id;
+      const chat = await ctx.db.chat.findFirst({
+        where: { id: input.chatId, userId },
+        select: { id: true, address: true },
+      });
+      if (!chat) return { ok: false as const, error: 'NOT_FOUND' as const };
+      if (!chat.address) return { ok: false as const, error: 'NO_ADDRESS' as const };
+
+      const faucetUrl = `https://liquidtestnet.com/faucet?address=${encodeURIComponent(chat.address)}&action=lbtc`;
+
+      // Set faucetUrl and status first
+      await ctx.db.chat.update({
+        where: { id: input.chatId },
+        data: { faucetUrl, fundingStatus: FundingStatus.AWAITING_TXID },
+      });
+
+      try {
+        const response = await fetch(faucetUrl, { method: 'GET' });
+        const body = await response.text();
+        const regex = /with transaction\s+([0-9a-fA-F]{64})/;
+        const match = regex.exec(body);
+        const fundingTxId = match?.[1]?.toLowerCase() ?? null;
+
+        await ctx.db.chat.update({
+          where: { id: input.chatId },
+          data: {
+            fundingTxId,
+            fundingStatus: fundingTxId
+              ? FundingStatus.AWAITING_CONFIRMATION
+              : FundingStatus.AWAITING_TXID,
+          },
+        });
+
+        return { ok: true as const, faucetUrl, fundingTxId };
+      } catch {
+        return { ok: false as const, error: 'FETCH_FAILED' as const };
       }
     }),
 
@@ -367,6 +436,7 @@ export const chatRouter = createTRPCRouter({
           fundingUtxoVout: true,
           fundingUtxoValueSats: true,
           fundingUtxoNonceHex: true,
+          fundingStatus: true,
         },
       });
       if (!chat) return { ok: false as const, error: "NOT_FOUND" as const };
@@ -409,8 +479,7 @@ export const chatRouter = createTRPCRouter({
           const valueBtc = typeof o.value === "number" ? (o.value / 1e8).toFixed(8) : null;
           return { n: idx, valueSats, valueBtc };
         });
-        const highlightBtcString = "0.00100000";
-        const selected = vout.find((o) => o.valueBtc === highlightBtcString) ?? null;
+        const selected = vout.find((o) => o.valueBtc === HIGHLIGHT_BTC) ?? null;
         const selectedIdx = selected?.n ?? null;
         const selectedSats = selected?.valueSats ?? null;
         const selectedNonce = (json.vout?.[selectedIdx ?? -1] as { nonce?: string } | undefined)?.nonce ?? null;
@@ -419,10 +488,14 @@ export const chatRouter = createTRPCRouter({
         await ctx.db.chat.update({
           where: { id: input.chatId },
           data: {
-            fundingTxSnapshot: snapshot as unknown as object,
+            fundingTxSnapshot: snapshot as Prisma.InputJsonValue,
             fundingUtxoVout: selectedIdx,
             fundingUtxoValueSats: selectedSats,
             fundingUtxoNonceHex: selectedNonce,
+            fundingStatus:
+              selectedIdx === null
+                ? FundingStatus.AWAITING_CONFIRMATION
+                : FundingStatus.COMPLETED,
           },
         });
 
@@ -467,8 +540,7 @@ export const chatRouter = createTRPCRouter({
           const valueBtc = typeof o.value === "number" ? (o.value / 1e8).toFixed(8) : null;
           return { n: idx, valueSats, valueBtc };
         });
-        const highlightBtcString = "0.00100000";
-        const selected = vout.find((o) => o.valueBtc === highlightBtcString) ?? null;
+        const selected = vout.find((o) => o.valueBtc === HIGHLIGHT_BTC) ?? null;
         const selectedIdx = selected?.n ?? null;
         const selectedSats = selected?.valueSats ?? null;
         const selectedNonce = (json.vout?.[selectedIdx ?? -1] as { nonce?: string } | undefined)?.nonce ?? null;
@@ -477,10 +549,14 @@ export const chatRouter = createTRPCRouter({
         await ctx.db.chat.update({
           where: { id: input.chatId },
           data: {
-            fundingTxSnapshot: snapshot as unknown as object,
+            fundingTxSnapshot: snapshot as Prisma.InputJsonValue,
             fundingUtxoVout: selectedIdx,
             fundingUtxoValueSats: selectedSats,
             fundingUtxoNonceHex: selectedNonce,
+            fundingStatus:
+              selectedIdx === null
+                ? FundingStatus.AWAITING_CONFIRMATION
+                : FundingStatus.COMPLETED,
           },
         });
 

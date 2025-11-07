@@ -1,0 +1,5 @@
+-- CreateEnum
+CREATE TYPE "FundingStatus" AS ENUM ('NO_ADDRESS', 'READY_TO_FUND', 'AWAITING_TXID', 'AWAITING_CONFIRMATION', 'COMPLETED', 'FAILED');
+
+-- AlterTable
+ALTER TABLE "Chat" ADD COLUMN     "fundingStatus" "FundingStatus" NOT NULL DEFAULT 'NO_ADDRESS';

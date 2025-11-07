@@ -20,9 +20,12 @@ export default async function RootLayout({
   }
 
   return (
-    <div className="flex min-h-screen">
-      <div>
-        <ChatSidebar userName={session.user?.name ?? undefined} />
+    <div className="flex h-screen overflow-hidden">
+      <div className="shrink-0">
+        <ChatSidebar 
+          userName={session.user?.name ?? undefined}
+          userImage={session.user?.image ?? undefined}
+        />
       </div>
       <div className="flex-1 overflow-auto">{children}</div>
     </div>

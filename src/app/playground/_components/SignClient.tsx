@@ -309,11 +309,6 @@ export default function SignClient({ chatId }: { chatId: string }) {
       </div>
 
       <pre className="rounded bg-gray-100 p-3 text-sm whitespace-pre-wrap">{statusMessage || loadingMessage}</pre>
-
-      <div className="flex gap-4 text-sm">
-        <a href={`/playground/${chatId}/funding`} className="underline">Back to Funding</a>
-        <a href={`/playground/${chatId}`} className="underline">Back to full playground</a>
-      </div>
     </div>
   );
 }

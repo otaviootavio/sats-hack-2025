@@ -14,6 +14,15 @@ datasource db {
     url      = env("DATABASE_URL")
 }
 
+enum FundingStatus {
+    NO_ADDRESS
+    READY_TO_FUND
+    AWAITING_TXID
+    AWAITING_CONFIRMATION
+    COMPLETED
+    FAILED
+}
+
 // Necessary for Next auth
 model Account {
     id                       String  @id @default(cuid())
@@ -81,6 +90,7 @@ model Chat {
     fundingUtxoVout      Int?
     fundingUtxoValueSats Int?
     fundingUtxoNonceHex  String?
+    fundingStatus        FundingStatus @default(NO_ADDRESS)
     // Ephemeral per-chat wallet (POC)
     walletPubHex         String?
     walletPrivEnc        String? // base64(ciphertext + authTag)

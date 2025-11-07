@@ -1,13 +1,28 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { api } from "~/trpc/react";
-import { AddressActions } from "~/app/playground/_components/AddressActions";
+import { NoAddressStep } from "./funding-steps/NoAddressStep";
+import { ReadyToFundStep } from "./funding-steps/ReadyToFundStep";
+import { FundingInProgressStep } from "./funding-steps/FundingInProgressStep";
+import { FundingCompleteStep } from "./funding-steps/FundingCompleteStep";
 
-type SelectedUtxo = { txid: string; voutIndex: number; valueSats: number } | null;
+type SelectedUtxo = {
+  txid: string;
+  voutIndex: number;
+  valueSats: number;
+} | null;
 
 type FundingVin = { txid: string; vout: number };
-type FundingVout = { n: number; valueSats: number | null; valueBtc: string | null };
-type FundingSelected = { voutIndex: number; valueSats: number | null; nonceHex: string | null };
+type FundingVout = {
+  n: number;
+  valueSats: number | null;
+  valueBtc: string | null;
+};
+type FundingSelected = {
+  voutIndex: number;
+  valueSats: number | null;
+  nonceHex: string | null;
+};
 type FundingTxOk = {
   ok: true;
   txid: string;
@@ -18,46 +33,82 @@ type FundingTxOk = {
 };
 type FundingTxErr = { ok: false; error?: string };
 type FundingTxResponse = FundingTxOk | FundingTxErr;
-type RefetchFundingTxResponse = { ok: boolean };
+
+type FundingStatus =
+  | 'NO_ADDRESS'
+  | 'READY_TO_FUND'
+  | 'AWAITING_TXID'
+  | 'AWAITING_CONFIRMATION'
+  | 'COMPLETED'
+  | 'FAILED';
+
+const isFundingStatus = (s: unknown): s is FundingStatus =>
+  typeof s === 'string' && (
+    s === 'NO_ADDRESS' ||
+    s === 'READY_TO_FUND' ||
+    s === 'AWAITING_TXID' ||
+    s === 'AWAITING_CONFIRMATION' ||
+    s === 'COMPLETED' ||
+    s === 'FAILED'
+  );
 
 export default function FundingClient({ chatId }: { chatId: string }) {
   const [statusMessage, setStatusMessage] = useState("");
-
-  const [fundedUrl, setFundedUrl] = useState("");
-  const [fundingTxId, setFundingTxId] = useState("");
-  const [selectedUtxo, setSelectedUtxo] = useState<SelectedUtxo>(null);
   const highlightBtcString = useMemo(() => "0.00100000", []);
 
   // tRPC hooks
   const utils = api.useUtils();
   const { data: chatData } = api.chat.get.useQuery(
     { chatId },
-    { refetchOnWindowFocus: false }
+    { refetchOnWindowFocus: false },
   );
   const { mutate: setActiveMutate } = api.chat.setActive.useMutation();
-  const { mutate: updateChatMutate } = api.chat.update.useMutation({
-    onSuccess: async () => {
-      await utils.chat.get.invalidate({ chatId });
-      await utils.chat.list.invalidate();
-    },
-  });
-  const { mutateAsync: requestFundingMutate, isPending: isFunding } = api.chat.requestFunding.useMutation({
-    onSuccess: async () => {
-      await utils.chat.get.invalidate({ chatId });
-      await utils.chat.list.invalidate();
-    },
-  });
+  
+  const fundingStatus: FundingStatus | undefined = isFundingStatus(chatData?.fundingStatus)
+    ? chatData?.fundingStatus
+    : undefined;
+  const { mutateAsync: initiateFundingMutate, isPending: isInitiating } =
+    api.chat.initiateFunding.useMutation({
+      onSuccess: async (data) => {
+        await utils.chat.get.invalidate({ chatId });
+        await utils.chat.list.invalidate();
+        if (data && 'fundingTxId' in data && data.fundingTxId) {
+          await utils.chat.getFundingTx.invalidate({ chatId });
+        }
+      },
+    });
+  const { mutateAsync: requestFundingMutate, isPending: isFunding } =
+    api.chat.requestFunding.useMutation({
+      onSuccess: async (data) => {
+        await utils.chat.get.invalidate({ chatId });
+        await utils.chat.list.invalidate();
+        // If we got a funding TX ID, trigger a fetch of the transaction details
+        if (data && 'fundingTxId' in data && data.fundingTxId) {
+          await utils.chat.getFundingTx.invalidate({ chatId });
+        }
+      },
+    });
   const fundingTxQuery = api.chat.getFundingTx.useQuery(
     { chatId },
-    { enabled: !!fundingTxId, refetchOnWindowFocus: false }
-  );
-  const { mutateAsync: refetchFundingTxMutate, isPending: isRefetching } = api.chat.refetchFundingTx.useMutation({
-    onSuccess: async () => {
-      await utils.chat.getFundingTx.invalidate({ chatId });
+    { 
+      enabled: !!chatData?.fundingTxId, 
+      refetchOnWindowFocus: false,
+      retry: false, // Don't retry failed requests automatically
+      refetchInterval: fundingStatus === 'AWAITING_CONFIRMATION' ? 10000 : false,
     },
-  });
+  );
+  const { mutateAsync: refetchFundingTxMutate, isPending: isRefetching } =
+    api.chat.refetchFundingTx.useMutation({
+      onSuccess: async () => {
+        // Invalidate and refetch the funding tx query
+        await utils.chat.getFundingTx.invalidate({ chatId });
+        await utils.chat.getFundingTx.refetch({ chatId });
+      },
+    });
 
-  const fundingTxDataOk: FundingTxOk | null = fundingTxQuery.data?.ok ? (fundingTxQuery.data as FundingTxOk) : null;
+  const fundingTxDataOk: FundingTxOk | null = fundingTxQuery.data?.ok
+    ? (fundingTxQuery.data as FundingTxOk)
+    : null;
 
   // mark active
   useEffect(() => {
@@ -65,84 +116,64 @@ export default function FundingClient({ chatId }: { chatId: string }) {
     setActiveMutate({ chatId });
   }, [chatId, setActiveMutate]);
 
-  // load persisted funding data and address
-  useEffect(() => {
-    if (!chatData) return;
-    setFundedUrl(chatData.faucetUrl ?? "");
-    setFundingTxId(chatData.fundingTxId ?? "");
-  }, [chatData]);
-
   // Get address from chat data
   const address = chatData?.address ?? "";
+  const fundedUrl = chatData?.faucetUrl ?? "";
+  const fundingTxId = chatData?.fundingTxId ?? "";
 
-  // select server-provided utxo when tx loads
-  useEffect(() => {
-    if (!fundingTxId || !fundingTxQuery.data?.ok) {
-      setSelectedUtxo(null);
-      return;
-    }
+
+  // Derive selected UTXO from server data
+  const selectedUtxo: SelectedUtxo = useMemo(() => {
+    if (!fundingTxId || !fundingTxQuery.data?.ok) return null;
     const data = fundingTxQuery.data as FundingTxOk;
     const selected = data.selected;
-    if (selected && typeof selected.voutIndex === "number") {
-      const sats = typeof selected.valueSats === "number" ? selected.valueSats : Math.round(parseFloat(highlightBtcString) * 1e8);
-      setSelectedUtxo({ txid: fundingTxId, voutIndex: selected.voutIndex, valueSats: sats });
-      return;
+    if (selected && typeof selected.voutIndex === 'number') {
+      const sats =
+        typeof selected.valueSats === 'number'
+          ? selected.valueSats
+          : Math.round(parseFloat(highlightBtcString) * 1e8);
+      return { txid: fundingTxId, voutIndex: selected.voutIndex, valueSats: sats };
     }
     const voutItems: FundingVout[] = data.vout ?? [];
     const match = voutItems.find((o) => o.valueBtc === highlightBtcString);
-    if (match && typeof match.n === "number") {
-      const sats = typeof match.valueSats === "number" ? match.valueSats : Math.round(parseFloat(highlightBtcString) * 1e8);
-      setSelectedUtxo({ txid: fundingTxId, voutIndex: match.n, valueSats: sats });
-    } else {
-      setSelectedUtxo(null);
+    if (match && typeof match.n === 'number') {
+      const sats =
+        typeof match.valueSats === 'number'
+          ? match.valueSats
+          : Math.round(parseFloat(highlightBtcString) * 1e8);
+      return { txid: fundingTxId, voutIndex: match.n, valueSats: sats };
     }
+    return null;
   }, [fundingTxQuery.data, fundingTxId, highlightBtcString]);
 
-
-  const handleFundAddress = () => {
+  const handleFundAddress = async () => {
     if (!address) return;
-    const url = `https://liquidtestnet.com/faucet?address=${encodeURIComponent(address)}&action=lbtc`;
     setStatusMessage("Requesting funding from faucet...");
-    setFundedUrl(url);
-    updateChatMutate({ chatId, faucetUrl: url });
-    void requestFundingMutate({ chatId })
-      .then((res) => {
-        const tx = (res as { fundingTxId?: string } | undefined)?.fundingTxId;
-        if (tx) {
-          setFundingTxId(tx);
-          setStatusMessage(`Funding requested. Transaction: ${tx}. You can open details below.`);
-        } else {
-          setFundingTxId("");
-          setStatusMessage("Funding requested but we could not fetch the funding transaction.");
-        }
-      })
-      .catch(() => {
-        setFundingTxId("");
-        setStatusMessage("Funding requested but we could not fetch the funding transaction.");
-      });
+    try {
+      const res = await initiateFundingMutate({ chatId });
+      const tx = (res as { fundingTxId?: string } | undefined)?.fundingTxId;
+      if (tx) {
+        setStatusMessage(`Funding requested. Transaction: ${tx}. You can open details below.`);
+      } else {
+        setStatusMessage("Funding requested. Waiting for transaction id from faucet...");
+      }
+    } catch {
+      setStatusMessage("Failed to initiate funding. Please try again later.");
+    }
   };
 
   const handleRetryFetchFunding = async () => {
     if (!fundedUrl && !address) return;
     try {
-      // If there is no persisted faucet URL yet, compute and persist it now.
-      if (!fundedUrl && address) {
-        const url = `https://liquidtestnet.com/faucet?address=${encodeURIComponent(address)}&action=lbtc`;
-        updateChatMutate({ chatId, faucetUrl: url });
-        setFundedUrl(url);
-      }
       setStatusMessage("Retrying to fetch funding transaction id from faucet...");
       const res = await requestFundingMutate({ chatId });
       const tx = (res as { fundingTxId?: string } | undefined)?.fundingTxId;
       if (tx) {
-        setFundingTxId(tx);
         setStatusMessage(`Success: funding transaction id ${tx}.`);
       } else {
-        setFundingTxId("");
         setStatusMessage("We could not fetch the funding transaction. Please try again later.");
       }
     } catch {
-      setFundingTxId("");
       setStatusMessage("We could not fetch the funding transaction. Please try again later.");
     }
   };
@@ -151,130 +182,75 @@ export default function FundingClient({ chatId }: { chatId: string }) {
     if (!fundingTxId) return;
     try {
       setStatusMessage("Refreshing transaction details from Blockstream...");
-      const res = (await refetchFundingTxMutate({ chatId })) as RefetchFundingTxResponse;
-      if (res.ok) {
+      const res = await refetchFundingTxMutate({
+        chatId,
+      }) as unknown as FundingTxResponse;
+      if (res.ok && 'selected' in res && res.selected) {
+        setStatusMessage("Transaction confirmed! UTXO selected and saved.");
+      } else if (res.ok) {
         setStatusMessage("Transaction details refreshed.");
       } else {
-        setStatusMessage("Failed to refresh transaction details.");
+        setStatusMessage("Failed to refresh transaction details. The transaction may not be confirmed yet.");
       }
     } catch {
-      setStatusMessage("Failed to refresh transaction details.");
+      setStatusMessage("Failed to refresh transaction details. The transaction may not be confirmed yet.");
     }
+  };
+
+  // Determine which step to show
+  const renderStep = () => {
+    // Explicit status machine
+    if (fundingStatus === 'NO_ADDRESS' || !address) {
+      return <NoAddressStep chatId={chatId} />;
+    }
+
+    if (fundingStatus === 'COMPLETED' && selectedUtxo && fundingTxId) {
+      return (
+        <FundingCompleteStep
+          address={address}
+          fundingTxId={fundingTxId}
+          selectedUtxo={selectedUtxo}
+          fundingTxData={fundingTxDataOk}
+          fundedUrl={fundedUrl}
+          highlightBtcString={highlightBtcString}
+          isRefetching={isRefetching}
+          onRefetchFundingTx={handleRefetchFundingTx}
+        />
+      );
+    }
+
+    if (fundingStatus === 'AWAITING_TXID' || fundingStatus === 'AWAITING_CONFIRMATION') {
+      return (
+        <FundingInProgressStep
+          address={address}
+          fundedUrl={fundedUrl}
+          fundingTxId={fundingTxId}
+          selectedUtxo={selectedUtxo}
+          isFunding={isFunding || isInitiating}
+          isRefetching={isRefetching}
+          fundingTxData={fundingTxDataOk}
+          highlightBtcString={highlightBtcString}
+          fundingStatus={fundingStatus}
+          onRetryFetchFunding={handleRetryFetchFunding}
+          onRefetchFundingTx={handleRefetchFundingTx}
+        />
+      );
+    }
+
+    // READY_TO_FUND (default)
+    return <ReadyToFundStep address={address} onFundAddress={handleFundAddress} />;
   };
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <strong>Address</strong>
-        <span className="text-xs text-muted-foreground">Derived from the program&apos;s CMR. Faucet sends 100000 tL-BTC.</span>
-      </div>
-      <AddressActions
-        onCopy={async () => { if (!address) return; await navigator.clipboard.writeText(address); setStatusMessage("Copied address to clipboard."); }}
-        copyDisabled={!address}
-      />
-      <textarea value={address} readOnly rows={2} className="w-full rounded border p-2 font-mono text-sm" />
+      {renderStep()}
 
-      <label className="block text-sm font-medium">Funding</label>
-      {!address && (
-        <p className="text-muted-foreground text-sm">No address found for this chat. The address should be generated in the Code Session.</p>
-      )}
-      {address && !fundedUrl && (
-        <div className="flex items-center gap-2">
-          <button onClick={handleFundAddress} className="btn rounded border px-3 py-1">Fund the wallet</button>
-        </div>
-      )}
-      {fundedUrl && (
-        <div className="flex items-center gap-2">
-          <a href={fundedUrl} target="_blank" rel="noopener noreferrer" className="btn rounded border px-3 py-1">Click here to see details</a>
-        </div>
-      )}
-      {fundedUrl && fundingTxId && (
-        <div className="mt-2 text-sm">
-          <span className="font-medium">Funding transaction:</span> {fundingTxId}{" "}
-          <a
-            href={`https://blockstream.info/liquidtestnet/tx/${fundingTxId}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline"
-          >
-            View on explorer
-          </a>
-        </div>
-      )}
-      {fundedUrl && !fundingTxId && (
-        <div className="mt-2 flex items-center gap-2 text-sm">
-          <span>we could not fetch the funding transaction</span>
-          <button onClick={handleRetryFetchFunding} disabled={isFunding} title="Retry" className="btn rounded border px-2 py-1">↻</button>
+      {statusMessage && (
+        <div className="rounded bg-gray-100 p-3 text-sm whitespace-pre-wrap">
+          {statusMessage}
         </div>
       )}
 
-      {fundingTxId && (
-        <div className="mt-4">
-          <div className="mb-2 text-sm font-medium flex items-center gap-2">
-            <span>Transaction details</span>
-            <button onClick={handleRefetchFundingTx} disabled={isRefetching} title="Refresh" className="btn rounded border px-2 py-1">↻</button>
-          </div>
-          {!fundingTxQuery.data && fundingTxQuery.isLoading && (
-            <div className="text-sm text-muted-foreground">Loading transaction...</div>
-          )}
-          {fundingTxQuery.error && (
-            <div className="text-sm text-red-600">Failed to load transaction details.</div>
-          )}
-          {fundingTxQuery.data?.ok && (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <div className="text-sm font-medium mb-1">Inputs</div>
-                <ul className="space-y-1 text-sm">
-                  {(fundingTxDataOk?.vin ?? []).map((vinItem, idx) => (
-                    <li key={`vin-${idx}`} className="rounded border px-2 py-1">
-                      <div className="break-all">{vinItem.txid}</div>
-                      <div className="text-muted-foreground">index: {vinItem.vout}</div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-              <div>
-                <div className="text-sm font-medium mb-1">Outputs</div>
-                <ul className="space-y-1 text-sm">
-                  {(fundingTxDataOk?.vout ?? []).map((voutItem) => {
-                    const isHighlight = voutItem.valueBtc === highlightBtcString;
-                    return (
-                      <li key={`vout-${voutItem.n}`} className={`rounded border px-2 py-1 ${isHighlight ? "bg-yellow-100" : ""}`}>
-                        <div className="break-all">{fundingTxId}</div>
-                        <div className="text-muted-foreground">index: {voutItem.n}</div>
-                        {typeof voutItem.valueBtc === "string" && (
-                          <div className="text-muted-foreground">value: {voutItem.valueBtc}</div>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-              <div className="sm:col-span-2">
-                {selectedUtxo && (
-                  <div className="mt-2 rounded border p-3">
-                    <div className="mb-1 text-sm font-medium">Selected UTXO</div>
-                    <div className="text-sm">
-                      <div><span className="font-medium">txid:</span> <span className="break-all">{selectedUtxo.txid}</span></div>
-                      <div><span className="font-medium">vout index:</span> {selectedUtxo.voutIndex}</div>
-                      <div><span className="font-medium">value (sats):</span> {selectedUtxo.valueSats}</div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      <pre className="rounded bg-gray-100 p-3 text-sm whitespace-pre-wrap">{statusMessage}</pre>
-
-      <div className="flex gap-4 text-sm">
-        <a href={`/playground/${chatId}`} className="underline">Back to full playground</a>
-        <a href={`/playground/${chatId}/code`} className="underline">Go to Code Session</a>
-      </div>
     </div>
   );
 }
-
-
