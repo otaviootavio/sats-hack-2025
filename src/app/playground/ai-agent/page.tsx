@@ -2,12 +2,37 @@
 
 import React from "react";
 import Link from "next/link";
+import { MessageContent } from "./_components/MessageContent";
+
+function ThinkingIndicator({ message }: { message: string }) {
+  return (
+    <div className="flex items-center gap-2 text-slate-500">
+      <div className="flex gap-1">
+        <div className="h-2 w-2 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.3s]"></div>
+        <div className="h-2 w-2 animate-bounce rounded-full bg-slate-400 [animation-delay:-0.15s]"></div>
+        <div className="h-2 w-2 animate-bounce rounded-full bg-slate-400"></div>
+      </div>
+      {message && (
+        <span className="text-xs italic text-slate-500">{message}</span>
+      )}
+    </div>
+  );
+}
 
 type Message = {
   id: string;
   role: "assistant" | "user";
   content: string;
 };
+
+interface StreamEvent {
+  type: 'thinking' | 'text' | 'done' | 'error';
+  data: {
+    message?: string;
+    accumulated?: string;
+    error?: string;
+  };
+}
 
 const initialMessages: Message[] = [
   {
@@ -22,19 +47,9 @@ export default function AiAgentPage() {
   const [messages, setMessages] = React.useState<Message[]>(initialMessages);
   const [input, setInput] = React.useState("");
   const [isSending, setIsSending] = React.useState(false);
+  const [thinkingMessage, setThinkingMessage] = React.useState<string>("");
   const messagesEndRef = React.useRef<HTMLDivElement | null>(null);
   const messagesContainerRef = React.useRef<HTMLDivElement | null>(null);
-  const pendingReplyRef = React.useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-
-  React.useEffect(() => {
-    return () => {
-      if (pendingReplyRef.current) {
-        clearTimeout(pendingReplyRef.current);
-      }
-    };
-  }, []);
 
   React.useEffect(() => {
     if (messagesContainerRef.current) {
@@ -45,7 +60,7 @@ export default function AiAgentPage() {
     }
   }, [messages]);
 
-  const handleSend = (event: React.FormEvent<HTMLFormElement>) => {
+  const handleSend = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const trimmed = input.trim();
     if (!trimmed || isSending) {
@@ -62,16 +77,98 @@ export default function AiAgentPage() {
     setInput("");
     setIsSending(true);
 
-    pendingReplyRef.current = setTimeout(() => {
-      const assistantMessage: Message = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content:
-          "Great thought! We'll soon wire this up to our full agent runtime. For now, imagine I'm drafting the perfect smart contract snippet for you.",
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
+    // Cria mensagem de assistente vazia para streaming
+    const assistantMessageId = crypto.randomUUID();
+    const assistantMessage: Message = {
+      id: assistantMessageId,
+      role: "assistant",
+      content: "",
+    };
+    setMessages((prev) => [...prev, assistantMessage]);
+
+    try {
+      // Prepara histórico de conversa
+      const conversationHistory = messages.map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+      }));
+
+      // Chama a API de streaming
+      const response = await fetch("/api/ai-agent", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          message: trimmed,
+          conversationHistory,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to get response");
+      }
+
+      // Processa streaming
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
+      let accumulatedText = "";
+
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const chunk = decoder.decode(value);
+          const lines = chunk.split("\n").filter((line) => line.trim());
+
+          for (const line of lines) {
+            try {
+              const event = JSON.parse(line) as StreamEvent;
+              
+              if (event.type === "thinking") {
+                // Atualiza mensagem de pensamento
+                setThinkingMessage(event.data.message ?? "");
+              } else if (event.type === "text") {
+                // Quando começa a receber texto, limpa mensagem de pensamento
+                setThinkingMessage("");
+                accumulatedText = event.data.accumulated ?? "";
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantMessageId
+                      ? { ...msg, content: accumulatedText }
+                      : msg
+                  )
+                );
+              } else if (event.type === "done") {
+                setThinkingMessage("");
+                setIsSending(false);
+              } else if (event.type === "error") {
+                setThinkingMessage("");
+                throw new Error(event.data.error ?? "Unknown error");
+              }
+            } catch (parseError: unknown) {
+              // Ignora erros de parsing de linhas incompletas
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Error sending message:", error);
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === assistantMessageId
+            ? {
+                ...msg,
+                content:
+                  "Sorry, I encountered an error. Please try again.",
+              }
+            : msg
+        )
+      );
       setIsSending(false);
-    }, 600);
+      setThinkingMessage("");
+    }
   };
 
   return (
@@ -115,7 +212,14 @@ export default function AiAgentPage() {
                       : "border border-slate-200 bg-white text-slate-900"
                   }`}
                 >
-                  {message.content}
+                  {message.content ? (
+                    <MessageContent
+                      content={message.content}
+                      isUser={message.role === "user"}
+                    />
+                  ) : message.role === "assistant" && isSending ? (
+                    <ThinkingIndicator message={thinkingMessage} />
+                  ) : null}
                 </div>
               </div>
             ))}
@@ -133,16 +237,24 @@ export default function AiAgentPage() {
             onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
-                handleSend(
+                void handleSend(
                   event as unknown as React.FormEvent<HTMLFormElement>,
                 );
               }
             }}
             placeholder="Share what you want to build, and we'll guide you…"
             rows={3}
-            className="w-full resize-none overflow-y-auto rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-200 sm:flex-1"
+            disabled={isSending}
+            className="w-full resize-none overflow-y-auto rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm shadow-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-200 disabled:opacity-50 disabled:cursor-not-allowed sm:flex-1"
             aria-label="Message"
           />
+          <button
+            type="submit"
+            disabled={isSending || !input.trim()}
+            className="rounded-xl bg-sky-600 px-6 py-3 text-sm font-medium text-white shadow-sm transition hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isSending ? "Sending..." : "Send"}
+          </button>
         </div>
       </form>
     </div>
